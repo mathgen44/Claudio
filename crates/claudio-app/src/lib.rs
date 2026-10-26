@@ -10,6 +10,8 @@ mod knowledge;
 pub mod router;
 mod schedule;
 mod tasks;
+mod telegram;
+mod voice;
 
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex, RwLock};
@@ -37,12 +39,15 @@ pub use claudio_memory;
 pub use claudio_models;
 pub use claudio_perms;
 pub use claudio_tools;
+pub use claudio_voice;
 pub use cloud::{BudgetStatus, ProviderView, UsageReport};
 pub use conversation::{Reply, StreamEvent, ToolTrace};
 pub use hub::{RepoView, VariantView};
 pub use knowledge::KnowledgeStatus;
 pub use schedule::ScheduleView;
 pub use tasks::{AppEvent, EventSink, TaskDetail};
+pub use telegram::TelegramStatus;
+pub use voice::{Transcript, VoiceComponentView, VoiceStatus};
 
 pub const DEFAULT_SESSION_TITLE: &str = "Nouvelle conversation";
 
@@ -76,6 +81,9 @@ pub struct Claudio {
     pub(crate) watcher: Mutex<
         Option<notify_debouncer_mini::Debouncer<notify_debouncer_mini::notify::RecommendedWatcher>>,
     >,
+    /// Serveurs de reconnaissance vocale.
+    pub(crate) whisper: claudio_voice::Whisper,
+    pub(crate) telegram: telegram::State,
 }
 
 /// Agents distants exécutés en même temps au plus.
@@ -141,6 +149,8 @@ impl Claudio {
             embedder: LocalEngine::default(),
             indexing: Mutex::default(),
             watcher: Mutex::default(),
+            whisper: Default::default(),
+            telegram: Default::default(),
             running_tasks: Mutex::default(),
             events: RwLock::default(),
             local_slots: Arc::new(tokio::sync::Semaphore::new(parallel)),
@@ -440,8 +450,10 @@ impl Claudio {
 
     /// Arrête proprement les moteurs (appelé à la fermeture).
     pub async fn shutdown(&self) {
+        self.stop_telegram();
         self.engine.unload().await;
         self.embedder.unload().await;
+        self.whisper.stop_all().await;
     }
 }
 

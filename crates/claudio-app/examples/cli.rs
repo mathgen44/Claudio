@@ -212,6 +212,52 @@ async fn main() -> Result<()> {
                 );
             }
         }
+        ["voice"] => {
+            let st = app.voice_status();
+            for c in &st.components {
+                println!(
+                    "{:<16} {:>6} Mo  {}  {}",
+                    c.id,
+                    c.size >> 20,
+                    if c.installed { "installé" } else { "-" },
+                    c.label
+                );
+            }
+            println!(
+                "dictée : {} ; manque {:?}",
+                st.stt_model, st.dictation_missing
+            );
+            for v in app.system_voices().await? {
+                println!("voix Windows : {} ({})", v.name, v.culture);
+            }
+        }
+        ["voice-install", id] => {
+            app.install_voice(id, |p| {
+                if let Some(t) = p.total {
+                    eprint!("\r{} / {} Mo   ", p.downloaded >> 20, t >> 20);
+                }
+            })
+            .await?;
+            println!("\n{id} installé");
+        }
+        ["say", text, out] => {
+            let wav = app.synthesize(text).await?;
+            std::fs::write(out, &wav)?;
+            println!("{} octets écrits dans {out}", wav.len());
+        }
+        ["hear", file] => {
+            let t = std::time::Instant::now();
+            let r = app.transcribe(std::fs::read(file)?, false).await?;
+            println!(
+                "« {} » ({:.1} s d'audio, {:.1} s)",
+                r.text,
+                r.seconds,
+                t.elapsed().as_secs_f32()
+            );
+            let t = std::time::Instant::now();
+            let w = app.transcribe(std::fs::read(file)?, true).await;
+            println!("mot d'éveil : {w:?} ({:.1} s)", t.elapsed().as_secs_f32());
+        }
         ["forget", "all"] => println!("{} souvenirs effacés", app.delete_all_memories()?),
         ["unindex", id] => {
             app.remove_index_source(id.parse()?)?;

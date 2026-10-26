@@ -1,9 +1,11 @@
 import clsx from "clsx";
-import { Bot, Boxes, Brain, Cloud as CloudIcon, MessageSquare, ScrollText, Settings as SettingsIcon, ShieldCheck } from "lucide-react";
+import { AudioLines, Bot, Boxes, Brain, Cloud as CloudIcon, MessageSquare, ScrollText, Settings as SettingsIcon, ShieldCheck } from "lucide-react";
 import { useEffect, useState, type ReactNode } from "react";
 import { api, type AppEvent } from "./api";
 import { ApprovalDialog } from "./components/ApprovalDialog";
 import { DownloadRow } from "./components/DownloadRow";
+import { UpdateBanner } from "./components/UpdateBanner";
+import { WakeWord } from "./components/WakeWord";
 import { StoreProvider, useStore } from "./store";
 import { ErrorNote, Spinner } from "./ui";
 import { Access } from "./views/Access";
@@ -15,8 +17,9 @@ import { Journal } from "./views/Journal";
 import { Memory } from "./views/Memory";
 import { Onboarding } from "./views/Onboarding";
 import { Settings } from "./views/Settings";
+import { Voice } from "./views/Voice";
 
-type View = "chat" | "agents" | "memory" | "models" | "cloud" | "access" | "journal" | "settings" | "onboarding";
+type View = "chat" | "agents" | "memory" | "models" | "cloud" | "access" | "voice" | "journal" | "settings" | "onboarding";
 
 export default function App() {
   return (
@@ -90,15 +93,20 @@ function Shell() {
         <NavButton label="Outils et accès" active={view === "access"} onClick={() => setView("access")}>
           <ShieldCheck size={20} />
         </NavButton>
+        <NavButton label="Voix et Telegram" active={view === "voice"} onClick={() => setView("voice")}>
+          <AudioLines size={20} />
+        </NavButton>
         <NavButton label="Journal d'activité" active={view === "journal"} onClick={() => setView("journal")}>
           <ScrollText size={20} />
         </NavButton>
         <div className="flex-1" />
+        <WakeWord onWake={() => setView("chat")} />
         <NavButton label="Paramètres" active={view === "settings" || view === "onboarding"} onClick={() => setView("settings")}>
           <SettingsIcon size={20} />
         </NavButton>
       </nav>
       <main className="flex min-w-0 flex-1 flex-col">
+        <UpdateBanner />
         {background.length > 0 && (
           <div className="space-y-2 border-b border-[var(--border)] bg-[var(--panel)] px-5 py-2">
             {background.map(([id, d]) => (
@@ -114,6 +122,7 @@ function Shell() {
           {view === "models" && <Models />}
           {view === "cloud" && <Cloud />}
           {view === "access" && <Access />}
+          {view === "voice" && <Voice />}
           {view === "journal" && <Journal />}
           {view === "settings" && <Settings onRestartOnboarding={() => setView("onboarding")} />}
         </div>

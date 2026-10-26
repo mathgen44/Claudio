@@ -69,6 +69,11 @@ impl AppPaths {
         self.data_dir.join("runtimes")
     }
 
+    /// Moteurs et modèles de la voix.
+    pub fn voice_dir(&self) -> PathBuf {
+        self.data_dir.join("voice")
+    }
+
     /// Définitions d'agents personnalisés (YAML).
     pub fn agents_dir(&self) -> PathBuf {
         self.config_dir.join("agents")

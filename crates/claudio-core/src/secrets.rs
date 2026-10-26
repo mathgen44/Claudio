@@ -7,6 +7,7 @@ const PREFIX: &str = "Claudio/";
 
 /// Noms des secrets connus.
 pub const HF_TOKEN: &str = "hf_token";
+pub const TELEGRAM_TOKEN: &str = "telegram_token";
 
 #[cfg(windows)]
 mod imp {

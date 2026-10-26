@@ -5,11 +5,11 @@ use std::sync::Arc;
 
 use claudio_app::claudio_agents::AgentDef;
 use claudio_app::claudio_core::audit::AuditEntry;
-use claudio_app::claudio_core::config::MemorySettings;
 use claudio_app::claudio_core::config::{
     ActiveModel, Budget, CloudModel, McpServerConfig, McpTransport, Permissions, ProviderKind,
     RoutingMode,
 };
+use claudio_app::claudio_core::config::{MemorySettings, VoiceSettings};
 use claudio_app::claudio_core::tasks::{Schedule, Task, TaskStatus};
 use claudio_app::claudio_core::{AppPaths, Config, Message, Session};
 use claudio_app::claudio_llm::providers::RemoteModel;
@@ -21,9 +21,11 @@ use claudio_app::claudio_models::hf::ModelSummary;
 use claudio_app::claudio_models::{InstalledModel, Progress};
 use claudio_app::claudio_perms::Answer;
 use claudio_app::claudio_tools::mcp::McpTool;
+use claudio_app::claudio_voice::tts::SystemVoice;
 use claudio_app::{
     AccessOverview, AppEvent, BudgetStatus, Claudio, KnowledgeStatus, ProviderView, Recommendation,
-    Reply, RepoView, ScheduleView, Status, StreamEvent, TaskDetail, UsageReport,
+    Reply, RepoView, ScheduleView, Status, StreamEvent, TaskDetail, TelegramStatus, Transcript,
+    UsageReport, VoiceStatus,
 };
 use serde::Deserialize;
 use tauri::ipc::Channel;
@@ -116,6 +118,7 @@ struct SettingsPatch {
     llama_backend: Option<Option<String>>,
     onboarding_done: Option<bool>,
     thinking: Option<Option<bool>>,
+    check_updates: Option<bool>,
 }
 
 #[tauri::command]
@@ -138,6 +141,9 @@ fn update_settings(app: App<'_>, patch: SettingsPatch) -> CmdResult<Config> {
         }
         if let Some(v) = patch.thinking {
             c.thinking = v;
+        }
+        if let Some(v) = patch.check_updates {
+            c.check_updates = v;
         }
     })
     .map_err(err)
@@ -591,6 +597,86 @@ fn reject_skill(app: App<'_>, id: i64) -> CmdResult<()> {
     app.reject_skill(id).map_err(err)
 }
 
+#[tauri::command]
+fn voice_status(app: App<'_>) -> VoiceStatus {
+    app.voice_status()
+}
+
+#[tauri::command]
+async fn install_voice(app: App<'_>, id: String, on_progress: Channel<Progress>) -> CmdResult<()> {
+    app.install_voice(&id, |p| {
+        let _ = on_progress.send(p.clone());
+    })
+    .await
+    .map_err(err)
+}
+
+#[tauri::command]
+async fn remove_voice(app: App<'_>, id: String) -> CmdResult<()> {
+    app.remove_voice(&id).await.map_err(err)
+}
+
+#[tauri::command]
+async fn system_voices(app: App<'_>) -> CmdResult<Vec<SystemVoice>> {
+    app.system_voices().await.map_err(err)
+}
+
+#[tauri::command]
+async fn set_voice_settings(app: App<'_>, settings: VoiceSettings) -> CmdResult<()> {
+    let wake = settings.wake_word;
+    app.update_config(|c| c.voice = settings).map_err(err)?;
+    if !wake {
+        // Libère la mémoire des modèles vocaux ; ils redémarrent à la prochaine dictée.
+        app.stop_voice().await;
+    }
+    Ok(())
+}
+
+/// L'audio (WAV) arrive brut dans le corps de la requête ; l'en-tête `wake`
+/// indique une écoute du mot d'éveil.
+#[tauri::command]
+async fn transcribe(app: App<'_>, request: tauri::ipc::Request<'_>) -> CmdResult<Transcript> {
+    let tauri::ipc::InvokeBody::Raw(wav) = request.body() else {
+        return Err("audio attendu".into());
+    };
+    let wake = request.headers().get("wake").is_some_and(|v| v == "1");
+    app.transcribe(wav.clone(), wake).await.map_err(err)
+}
+
+/// Renvoie l'audio WAV brut (ArrayBuffer côté interface).
+#[tauri::command]
+async fn synthesize(app: App<'_>, text: String) -> CmdResult<tauri::ipc::Response> {
+    app.synthesize(&text)
+        .await
+        .map(tauri::ipc::Response::new)
+        .map_err(err)
+}
+
+#[tauri::command]
+fn telegram_status(app: App<'_>) -> TelegramStatus {
+    app.telegram_status()
+}
+
+#[tauri::command]
+async fn set_telegram_token(app: App<'_>, token: Option<String>) -> CmdResult<()> {
+    app.set_telegram_token(token.as_deref()).await.map_err(err)
+}
+
+#[tauri::command]
+async fn set_telegram_enabled(app: App<'_>, enabled: bool) -> CmdResult<()> {
+    app.set_telegram_enabled(enabled).map_err(err)
+}
+
+#[tauri::command]
+fn telegram_pairing_code(app: App<'_>) -> String {
+    app.telegram_pairing_code()
+}
+
+#[tauri::command]
+fn remove_telegram_chat(app: App<'_>, id: i64) -> CmdResult<()> {
+    app.remove_telegram_chat(id).map_err(err)
+}
+
 fn show_window(app: &AppHandle) {
     if let Some(w) = app.get_webview_window("main") {
         let _ = w.show();
@@ -674,6 +760,8 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_notification::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
+        .plugin(tauri_plugin_process::init())
         .setup({
             let claudio = claudio.clone();
             move |app| {
@@ -688,6 +776,8 @@ pub fn run() {
                     }
                     c.refresh_watchers();
                 });
+                let c = claudio.clone();
+                tauri::async_runtime::spawn(async move { c.start_telegram() });
                 Ok(())
             }
         })
@@ -779,6 +869,18 @@ pub fn run() {
             skill_proposals,
             accept_skill,
             reject_skill,
+            voice_status,
+            install_voice,
+            remove_voice,
+            system_voices,
+            set_voice_settings,
+            transcribe,
+            synthesize,
+            telegram_status,
+            set_telegram_token,
+            set_telegram_enabled,
+            telegram_pairing_code,
+            remove_telegram_chat,
         ])
         .build(tauri::generate_context!())
         .expect("construction de l'application")

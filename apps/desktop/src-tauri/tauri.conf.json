@@ -21,14 +21,13 @@
       }
     ],
     "security": {
-      "csp": "default-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: asset: https://huggingface.co; connect-src ipc: http://ipc.localhost"
+      "csp": "default-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: asset: https://huggingface.co; media-src 'self' blob: data:; connect-src ipc: http://ipc.localhost"
     }
   },
   "bundle": {
     "active": true,
     "targets": [
-      "nsis",
-      "msi"
+      "nsis"
     ],
     "icon": [
       "icons/32x32.png",
@@ -36,6 +35,31 @@
       "icons/128x128@2x.png",
       "icons/icon.icns",
       "icons/icon.ico"
-    ]
+    ],
+    "createUpdaterArtifacts": true,
+    "publisher": "Hervé Sevellec",
+    "copyright": "© 2026 Hervé Sevellec",
+    "shortDescription": "Assistant personnel local",
+    "longDescription": "Claudio, assistant personnel qui fait tourner ses modèles d'IA sur votre ordinateur.",
+    "windows": {
+      "nsis": {
+        "installMode": "currentUser",
+        "languages": [
+          "French"
+        ],
+        "displayLanguageSelector": false
+      }
+    }
+  },
+  "plugins": {
+    "updater": {
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEM1QzkwRDk5MTE5Njg1MjUKUldRbGhaWVJtUTNKeFRzNWIyNnAzZEFFbzZFUktPODlLVTVBdXpLMXpLRmVFNlZNakxsK1grZ1IK",
+      "endpoints": [
+        "https://github.com/mathgen44/Claudio/releases/latest/download/latest.json"
+      ],
+      "windows": {
+        "installMode": "passive"
+      }
+    }
   }
 }

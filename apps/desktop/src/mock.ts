@@ -27,6 +27,7 @@ import type {
   Recommendation,
   Session,
   Status,
+  VoiceStatus,
 } from "./api";
 
 const GB = 1024 ** 3;
@@ -51,7 +52,44 @@ const config: Config = {
   mcp_servers: [],
   tools_enabled: true,
   memory: { auto_extract: true, recall: true, learn_skills: true },
+  voice: {
+    language: "fr",
+    stt_model: null,
+    wake_word: false,
+    wake_phrase: "Claudio",
+    speak: "voice",
+    tts_engine: "system",
+    system_voice: null,
+    piper_voice: "piper-siwis",
+    rate: 0,
+  },
+  telegram: { enabled: false, chats: [] },
+  check_updates: true,
 };
+
+const MB = 1024 ** 2;
+const voiceMock: VoiceStatus = {
+  components: [
+    { id: "whisper-runtime", label: "Moteur whisper.cpp", description: "Reconnaissance vocale locale (processeur), version b5454.", kind: "sttruntime", size: 9 * MB, installed: false },
+    { id: "stt-base", label: "Whisper Base", description: "Très rapide : sert au mot d'éveil, ou à la dictée sur les petites machines.", kind: "stt", size: 57 * MB, installed: false },
+    { id: "stt-small", label: "Whisper Small", description: "Bon compromis vitesse et qualité.", kind: "stt", size: 181 * MB, installed: false },
+    { id: "stt-turbo", label: "Whisper Large v3 Turbo", description: "Meilleure transcription, plus lente sur les petits processeurs.", kind: "stt", size: 547 * MB, installed: false },
+    { id: "piper-runtime", label: "Moteur Piper", description: "Synthèse vocale neuronale locale, plus naturelle que les voix Windows.", kind: "ttsruntime", size: 21 * MB, installed: false },
+    { id: "piper-siwis", label: "Siwis (voix féminine)", description: "Voix Piper française.", kind: "voice", size: 60 * MB, installed: false },
+    { id: "piper-tom", label: "Tom (voix masculine)", description: "Voix Piper française.", kind: "voice", size: 60 * MB, installed: false },
+  ],
+  stt_model: "stt-turbo",
+  dictation_missing: [],
+  wake_missing: [],
+};
+const telegramMock = { has_token: false, bot: null as string | null, error: null, pairing_code: null as string | null };
+
+function refreshVoiceMock() {
+  const missing = (ids: string[]) => ids.filter((id) => !voiceMock.components.find((c) => c.id === id)?.installed);
+  voiceMock.stt_model = config.voice.stt_model ?? "stt-turbo";
+  voiceMock.dictation_missing = missing(["whisper-runtime", voiceMock.stt_model]);
+  voiceMock.wake_missing = missing(["whisper-runtime", "stt-base"]);
+}
 
 const memoriesMock: Memory[] = [
   { id: 1, content: "L'utilisateur préfère des réponses courtes.", category: "préférence", source: "manuel", session_id: null, pinned: true, created_at: "2026-10-20T10:00:00Z", updated_at: "2026-10-20T10:00:00Z" },
@@ -318,6 +356,7 @@ export async function mockInvoke<T>(cmd: string, args: Record<string, any> = {})
       if ("llamaBackend" in p) config.llama_backend = p.llamaBackend;
       if ("onboardingDone" in p) config.onboarding_done = p.onboardingDone;
       if ("thinking" in p) config.thinking = p.thinking;
+      if ("checkUpdates" in p) config.check_updates = p.checkUpdates;
       return r({ ...config });
     }
     case "set_hf_token":
@@ -491,6 +530,48 @@ export async function mockInvoke<T>(cmd: string, args: Record<string, any> = {})
     case "reindex_all":
     case "set_memory_settings":
       return r(undefined);
+    case "telegram_status":
+      return r({ ...telegramMock, enabled: config.telegram.enabled, chats: config.telegram.chats, running: config.telegram.enabled && telegramMock.has_token });
+    case "set_telegram_token":
+      telegramMock.has_token = !!args.token;
+      telegramMock.bot = args.token ? "@claudio_maison_bot" : null;
+      return r(undefined);
+    case "set_telegram_enabled":
+      config.telegram.enabled = args.enabled;
+      return r(undefined);
+    case "telegram_pairing_code":
+      telegramMock.pairing_code = "482913";
+      setTimeout(() => {
+        config.telegram.chats.push({ id: 1, name: "Hervé (@herve)" });
+        telegramMock.pairing_code = null;
+      }, 4000);
+      return r("482913");
+    case "remove_telegram_chat":
+      config.telegram.chats = config.telegram.chats.filter((c) => c.id !== args.id);
+      return r(undefined);
+    case "voice_status":
+      refreshVoiceMock();
+      return r(structuredClone(voiceMock));
+    case "install_voice": {
+      const c = voiceMock.components.find((x) => x.id === args.id)!;
+      await fakeDownload(c.size, `voice:${c.id}`, args.onProgress);
+      c.installed = true;
+      return r(undefined);
+    }
+    case "remove_voice":
+      voiceMock.components.find((x) => x.id === args.id)!.installed = false;
+      return r(undefined);
+    case "system_voices":
+      return r([
+        { name: "Microsoft Hortense Desktop", culture: "fr-FR" },
+        { name: "Microsoft Zira Desktop", culture: "en-US" },
+      ]);
+    case "set_voice_settings":
+      config.voice = args.settings;
+      return r(undefined);
+    case "transcribe":
+      await sleep(500);
+      return r({ text: args.wake ? "Claudio" : "Quelle est la météo prévue demain à Nantes ?", wake: args.wake ? "" : null, seconds: 3 });
     case "search_documents":
       return r([{ path: "D:\\Documents\\Maison\\factures\\edf-septembre.pdf", location: "page 1", text: "Facture EDF - septembre 2026\nMontant TTC : 104,20 euros", score: 0.03 }]);
     case "list_memories":

@@ -36,6 +36,82 @@ pub struct Config {
     /// Laisser l'assistant utiliser des outils (fichiers, web, commandes, MCP).
     pub tools_enabled: bool,
     pub memory: MemorySettings,
+    pub voice: VoiceSettings,
+    pub telegram: TelegramSettings,
+    /// Vérifier au démarrage si une nouvelle version de Claudio est publiée.
+    pub check_updates: bool,
+}
+
+/// Quand lire les réponses à voix haute.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum SpeakMode {
+    Never,
+    /// Seulement quand la question a été posée à la voix.
+    #[default]
+    Voice,
+    Always,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum TtsEngine {
+    /// Voix installées avec Windows.
+    #[default]
+    System,
+    Piper,
+}
+
+/// Voix : reconnaissance et synthèse locales.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct VoiceSettings {
+    /// Langue parlée (code ISO, ex. `fr`).
+    pub language: String,
+    /// Modèle de dictée ; sinon choisi selon la machine.
+    pub stt_model: Option<String>,
+    /// Écouter en permanence le mot d'éveil.
+    pub wake_word: bool,
+    pub wake_phrase: String,
+    pub speak: SpeakMode,
+    pub tts_engine: TtsEngine,
+    /// Voix Windows ; sinon la première dans la langue choisie.
+    pub system_voice: Option<String>,
+    pub piper_voice: String,
+    /// Débit, de -10 à 10.
+    pub rate: i32,
+}
+
+impl Default for VoiceSettings {
+    fn default() -> Self {
+        Self {
+            language: "fr".into(),
+            stt_model: None,
+            wake_word: false,
+            wake_phrase: "Claudio".into(),
+            speak: SpeakMode::Voice,
+            tts_engine: TtsEngine::System,
+            system_voice: None,
+            piper_voice: "piper-siwis".into(),
+            rate: 0,
+        }
+    }
+}
+
+/// Canal Telegram (le jeton du robot est dans le Gestionnaire d'identifiants).
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(default)]
+pub struct TelegramSettings {
+    pub enabled: bool,
+    /// Conversations Telegram autorisées (jumelées).
+    pub chats: Vec<TelegramChat>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TelegramChat {
+    pub id: i64,
+    /// Nom affiché de l'interlocuteur.
+    pub name: String,
 }
 
 /// Mémoire à long terme et apprentissage.
@@ -235,6 +311,9 @@ impl Default for Config {
             mcp_servers: Vec::new(),
             tools_enabled: true,
             memory: MemorySettings::default(),
+            voice: VoiceSettings::default(),
+            telegram: TelegramSettings::default(),
+            check_updates: true,
         }
     }
 }

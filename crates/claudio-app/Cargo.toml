@@ -17,7 +17,9 @@ claudio-memory = { version = "0.1.0", path = "../claudio-memory" }
 claudio-models = { version = "0.1.0", path = "../claudio-models" }
 claudio-perms = { version = "0.1.0", path = "../claudio-perms" }
 claudio-tools = { version = "0.1.0", path = "../claudio-tools" }
+claudio-voice = { version = "0.1.0", path = "../claudio-voice" }
 croner = "4.0.2"
+getrandom = "0.3.4"
 notify-debouncer-mini = "0.7.0"
 reqwest = "0.13.5"
 serde = { version = "1.0.229", features = ["derive"] }

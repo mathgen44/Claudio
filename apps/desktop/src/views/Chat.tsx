@@ -1,6 +1,6 @@
 // Conversations : liste des sessions, fil de messages en continu, saisie.
 
-import { Brain, ChevronRight, Cloud, Cpu, MessageSquarePlus, Pencil, Send, Square, Trash2 } from "lucide-react";
+import { Brain, ChevronRight, Cloud, Cpu, Loader2, MessageSquarePlus, Mic, Pencil, Send, Square, Trash2, Volume2, VolumeX } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
@@ -16,7 +16,10 @@ import {
   type Session,
   type StreamEvent,
   type ToolTrace,
+  type VoiceStatus,
 } from "../api";
+import { VoiceSetup } from "../components/VoiceSetup";
+import { Dictation, onSpeaking, onVoiceCommand, speak, stopSpeaking, takeVoiceCommand } from "../voice";
 import { ApprovalDialog } from "../components/ApprovalDialog";
 import { ToolCard, type ToolStep } from "../components/ToolCard";
 import { useStore } from "../store";
@@ -87,6 +90,17 @@ export function Chat({ onOpenModels }: { onOpenModels: () => void }) {
   const [config, setConfig] = useState<Config | null>(null);
   const [approvals, setApprovals] = useState<ApprovalRequest[]>([]);
   const bottom = useRef<HTMLDivElement>(null);
+  const [voice, setVoice] = useState<VoiceStatus | null>(null);
+  const [voiceSetup, setVoiceSetup] = useState(false);
+  const [listening, setListening] = useState<"off" | "recording" | "transcribing">("off");
+  const [level, setLevel] = useState(0);
+  const [speaking, setSpeaking] = useState(false);
+  const dictation = useRef<Dictation | null>(null);
+
+  useEffect(() => {
+    api.voiceStatus().then(setVoice);
+    return onSpeaking(setSpeaking);
+  }, []);
 
   useEffect(() => {
     api.config().then(setConfig);
@@ -138,11 +152,11 @@ export function Chat({ onOpenModels }: { onOpenModels: () => void }) {
     return s.id;
   };
 
-  const send = async () => {
-    const text = input.trim();
+  const send = async (override?: string, spoken = false) => {
+    const text = (override ?? input).trim();
     if (!text || pending) return;
     setError(null);
-    setInput("");
+    if (override === undefined) setInput("");
     const sid = current ?? (await newSession(true));
     setPending({ user: text, reasoning: "", content: "", tools: [] });
     try {
@@ -154,6 +168,10 @@ export function Chat({ onOpenModels }: { onOpenModels: () => void }) {
         setPending((p) => p && applyEvent(p, e));
       });
       setLastSpeed(reply.tokens_per_sec);
+      const mode = config?.voice.speak ?? "voice";
+      if (!reply.cancelled && (mode === "always" || (spoken && mode === "voice"))) {
+        speak(reply.message.content).catch((e) => setError(String(e)));
+      }
     } catch (e) {
       setError(String(e));
     } finally {
@@ -163,6 +181,57 @@ export function Chat({ onOpenModels }: { onOpenModels: () => void }) {
       loadSessions();
     }
   };
+
+  /** Dictée : enregistre jusqu'au silence, transcrit en local, puis envoie. */
+  const dictate = async () => {
+    if (dictation.current) {
+      dictation.current.stop();
+      return;
+    }
+    const st = await api.voiceStatus();
+    setVoice(st);
+    if (st.dictation_missing.length) {
+      setVoiceSetup(true);
+      return;
+    }
+    stopSpeaking();
+    setError(null);
+    const d = new Dictation({ onLevel: setLevel });
+    dictation.current = d;
+    setListening("recording");
+    try {
+      await d.start();
+      const wav = await d.done;
+      if (!wav) return;
+      setListening("transcribing");
+      const t = await api.transcribe(wav, false);
+      if (t.text) await sendRef.current(t.text, true);
+    } catch (e) {
+      setError(String(e).includes("Permission") || String(e).includes("NotAllowed") ? "Accès au micro refusé." : String(e));
+    } finally {
+      dictation.current = null;
+      setListening("off");
+      setLevel(0);
+    }
+  };
+
+  // Les fonctions changent à chaque rendu : les demandes vocales passent par des références.
+  const sendRef = useRef(send);
+  sendRef.current = send;
+  const dictateRef = useRef(dictate);
+  dictateRef.current = dictate;
+
+  // Demande arrivée par le mot d'éveil (éventuellement avant l'ouverture de la page).
+  useEffect(() => {
+    const handle = () => {
+      const c = takeVoiceCommand();
+      if (c === null) return;
+      if (c) sendRef.current(c, true);
+      else if (!dictation.current) dictateRef.current();
+    };
+    handle();
+    return onVoiceCommand(handle);
+  }, []);
 
   const rename = async (s: Session) => {
     const title = window.prompt("Nouveau titre", s.title);
@@ -319,17 +388,54 @@ export function Chat({ onOpenModels }: { onOpenModels: () => void }) {
                 }
               }}
             />
+            {speaking && (
+              <Button variant="ghost" onClick={stopSpeaking} aria-label="Arrêter la lecture" title="Arrêter la lecture">
+                <VolumeX size={16} />
+              </Button>
+            )}
+            <Button
+              variant={listening === "off" ? "ghost" : "secondary"}
+              onClick={dictate}
+              disabled={!!noModel || listening === "transcribing" || !!pending}
+              aria-label={listening === "recording" ? "Terminer la dictée" : "Dicter"}
+              title={listening === "recording" ? "Je vous écoute… (cliquez pour terminer)" : "Dicter (reconnaissance vocale locale)"}
+              style={listening === "recording" ? { boxShadow: `0 0 0 ${2 + level * 6}px var(--accent-soft)` } : undefined}
+            >
+              {listening === "transcribing" ? (
+                <Loader2 size={16} className="animate-spin" />
+              ) : (
+                <Mic size={16} className={listening === "recording" ? "text-[var(--accent)]" : undefined} />
+              )}
+            </Button>
             {pending ? (
               <Button variant="secondary" onClick={() => current && api.cancelChat(current)} aria-label="Arrêter">
                 <Square size={16} />
               </Button>
             ) : (
-              <Button variant="primary" onClick={send} disabled={!input.trim() || !!noModel} aria-label="Envoyer">
+              <Button variant="primary" onClick={() => send()} disabled={!input.trim() || !!noModel} aria-label="Envoyer">
                 <Send size={16} />
               </Button>
             )}
           </div>
+          {listening !== "off" && (
+            <p className="mx-auto mt-1.5 max-w-3xl text-xs text-[var(--muted)]">
+              {listening === "recording" ? "Je vous écoute… la dictée s'arrête après un silence." : "Transcription…"}
+            </p>
+          )}
         </footer>
+        {voiceSetup && voice && (
+          <VoiceSetup
+            status={voice}
+            missing={voice.dictation_missing}
+            purpose="dictation"
+            onClose={() => setVoiceSetup(false)}
+            onDone={() => {
+              setVoiceSetup(false);
+              api.voiceStatus().then(setVoice);
+              dictate();
+            }}
+          />
+        )}
       </section>
     </div>
   );
@@ -372,6 +478,14 @@ function Bubble({
           {meta.model} · {meta.tokens ?? "?"} jetons · {(meta.duration_ms / 1000).toFixed(1).replace(".", ",")} s
           {meta.cost_usd != null && ` · ${formatUsd(meta.cost_usd)}`}
           {meta.route && meta.route !== "modèle local" && ` · ${meta.route}`}
+          <button
+            className="ml-2 inline-flex align-middle hover:text-[var(--text)]"
+            onClick={() => speak(content).catch(() => {})}
+            aria-label="Lire à voix haute"
+            title="Lire à voix haute"
+          >
+            <Volume2 size={12} />
+          </button>
         </p>
       )}
     </div>

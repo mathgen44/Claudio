@@ -3,6 +3,7 @@
 import { RefreshCw } from "lucide-react";
 import { useEffect, useState } from "react";
 import { api, backendLabel, type Config, type SettingsPatch } from "../api";
+import { findUpdate, installUpdate } from "../updates";
 import { DownloadRow } from "../components/DownloadRow";
 import { MachineCard } from "../components/MachineCard";
 import { RUNTIME_KEY, useStore } from "../store";
@@ -47,6 +48,24 @@ export function Settings({ onRestartOnboarding }: { onRestartOnboarding: () => v
       setSaved(value ? "Jeton enregistré dans le Gestionnaire d'identifiants Windows" : "Jeton supprimé");
     } catch (e) {
       setError(String(e));
+    }
+  };
+
+  const checkNow = async () => {
+    setError(null);
+    setSaved("Recherche d'une mise à jour…");
+    try {
+      const u = await findUpdate();
+      if (!u) {
+        setSaved("Claudio est à jour");
+        return;
+      }
+      if (!window.confirm(`Claudio ${u.version} est disponible. L'installer maintenant ? Claudio redémarrera.`)) return;
+      setSaved(`Téléchargement de Claudio ${u.version}…`);
+      await installUpdate(u, () => {});
+    } catch (e) {
+      setSaved(null);
+      setError(`Mise à jour impossible : ${e}`);
     }
   };
 
@@ -174,6 +193,25 @@ export function Settings({ onRestartOnboarding }: { onRestartOnboarding: () => v
           </Button>
         </div>
         <MachineCard status={status} />
+      </Card>
+
+      <Card className="space-y-3">
+        <h2 className="font-medium">Mises à jour</h2>
+        <label className="flex items-center gap-2">
+          <input
+            type="checkbox"
+            className="accent-[var(--accent)]"
+            checked={cfg.check_updates}
+            onChange={(e) => update({ checkUpdates: e.target.checked })}
+          />
+          Chercher une nouvelle version au démarrage
+        </label>
+        <p className="text-sm text-[var(--muted)]">
+          Les mises à jour sont signées : Claudio n'installe que les versions dont la signature correspond à sa clé publique.
+        </p>
+        <Button onClick={checkNow}>
+          <RefreshCw size={16} /> Rechercher maintenant
+        </Button>
       </Card>
 
       <Card className="flex flex-wrap gap-2">

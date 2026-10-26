@@ -321,8 +321,20 @@ Mesuré sur la machine de développement (RTX 5070 Ti) : ~440 jetons/s avec Qwen
 - Interface : page « Mémoire » (souvenirs, documents avec essai de recherche, compétences), annonces « souvenir retenu » et « compétence proposée ».
 - Testé en réel : corpus texte/Markdown/Word → bonne source en tête pour 4 questions ; Gemma 4 12B cherche seul dans les documents et cite le fichier ; mémorisation à la demande et automatique ; tâche réussie → compétence « create-shopping-list » proposée.
 
+### Phase 6 — livrée (2026-10-26)
+
+- `claudio-voice` : éléments téléchargeables à adresse et empreinte SHA-256 figées (whisper.cpp b5454 pour processeur, modèles Whisper Base / Small / Large v3 Turbo, Piper 2023.11.14-2 et deux voix françaises). Tout tourne sur le processeur pour laisser la carte graphique au modèle de conversation.
+- Dictée : le micro de la conversation enregistre en 16 kHz jusqu'au silence (détection d'énergie, bruit de fond appris) ; un `whisper-server` gardé en mémoire transcrit, le texte part tout seul. Modèle conseillé : Base (profil S), Small (M), Large v3 Turbo (L, XL). Annotations et hallucinations connues de Whisper sur les silences retirées.
+- Mot d'éveil (désactivé par défaut) : écoute continue dans l'interface, seuls les passages de parole courts (0,3 à 7 s) sont transcrits par Whisper Base, avec le mot en indice ; reconnaissance tolérante (« Clodio », « Dis Claudio »…) dans les trois premiers mots. La demande qui suit est envoyée ; le mot seul déclenche un signal puis une dictée. Écoute suspendue pendant la dictée et la lecture.
+- Lecture des réponses : voix Windows (SAPI, texte transmis par l'entrée standard) ou Piper ; Markdown retiré, blocs de code annoncés, adresses remplacées. Lecture quand la question a été posée à la voix (par défaut), toujours ou jamais ; bouton « lire » sur chaque réponse.
+- Telegram : jeton vérifié par `getMe` puis rangé dans le Gestionnaire d'identifiants (jamais dans les erreurs ni les journaux), réception par `getUpdates`, conversations privées jumelées par un code à 6 chiffres (aléa du système, 10 minutes, 5 essais, usage unique), une conversation Claudio par conversation Telegram, réponses découpées, autorisations par boutons (« une fois » ou « pour cette conversation », jamais « toujours »).
+- Installateur NSIS par utilisateur (sans droits administrateur), mise à jour automatique signée (`tauri-plugin-updater`, clé minisign hors dépôt), bandeau au démarrage et bouton dans les Paramètres, workflow GitHub `Publication` sur étiquette `v*`.
+- Testé : synthèse SAPI (Hortense), installation vérifiée de whisper.cpp et Whisper Base, construction de l'installateur signé ; interface dans l'aperçu ; tests unitaires (mot d'éveil, Markdown, WAV, catalogue, jumelage, découpage, boutons).
+
 ### Reporté
 
+- Messages vocaux Telegram (Opus à décoder avant Whisper).
+- Signature Authenticode de l'installateur (certificat payant).
 - Reconnaissance de caractères (OCR) des PDF scannés et des images.
 - Édition des agents dans l'interface (aujourd'hui : fichiers YAML).
 - Gestion de plusieurs modèles locaux chargés en même temps (un modèle partagé par les agents pour l'instant).

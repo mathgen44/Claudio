@@ -5,7 +5,7 @@ pub mod chat;
 pub mod embed;
 pub mod engine;
 pub mod ollama;
-mod process;
+pub mod process;
 pub mod providers;
 pub mod runtime;
 pub mod server;

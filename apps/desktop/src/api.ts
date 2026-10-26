@@ -120,6 +120,74 @@ export interface Config {
   mcp_servers: McpServer[];
   tools_enabled: boolean;
   memory: MemorySettings;
+  voice: VoiceSettings;
+  telegram: TelegramSettings;
+  check_updates: boolean;
+}
+
+export type SpeakMode = "never" | "voice" | "always";
+export type TtsEngine = "system" | "piper";
+
+export interface VoiceSettings {
+  language: string;
+  stt_model: string | null;
+  wake_word: boolean;
+  wake_phrase: string;
+  speak: SpeakMode;
+  tts_engine: TtsEngine;
+  system_voice: string | null;
+  piper_voice: string;
+  rate: number;
+}
+
+export type VoiceKind = "sttruntime" | "stt" | "ttsruntime" | "voice";
+
+export interface VoiceComponent {
+  id: string;
+  label: string;
+  description: string;
+  kind: VoiceKind;
+  size: number;
+  installed: boolean;
+}
+
+export interface VoiceStatus {
+  components: VoiceComponent[];
+  stt_model: string;
+  dictation_missing: string[];
+  wake_missing: string[];
+}
+
+export interface Transcript {
+  text: string;
+  /** Écoute du mot d'éveil : demande qui suit le mot, `null` s'il n'a pas été dit. */
+  wake: string | null;
+  seconds: number;
+}
+
+export interface SystemVoice {
+  name: string;
+  culture: string;
+}
+
+export interface TelegramChat {
+  id: number;
+  name: string;
+}
+
+export interface TelegramStatus {
+  enabled: boolean;
+  has_token: boolean;
+  bot: string | null;
+  running: boolean;
+  error: string | null;
+  chats: TelegramChat[];
+  pairing_code: string | null;
+}
+
+export interface TelegramSettings {
+  enabled: boolean;
+  chats: TelegramChat[];
 }
 
 export interface MemorySettings {
@@ -436,6 +504,7 @@ export interface SettingsPatch {
   llamaBackend?: string | null;
   onboardingDone?: boolean;
   thinking?: boolean | null;
+  checkUpdates?: boolean;
 }
 
 export interface Session {
@@ -584,6 +653,25 @@ export const api = {
   acceptSkill: (id: number, name: string, description: string, body: string) =>
     call<string>("accept_skill", { id, name, description, body }),
   rejectSkill: (id: number) => call<void>("reject_skill", { id }),
+  voiceStatus: () => call<VoiceStatus>("voice_status"),
+  installVoice: (id: string, onProgress: (p: Progress) => void) =>
+    call<void>("install_voice", { id, onProgress: channel(onProgress) }),
+  removeVoice: (id: string) => call<void>("remove_voice", { id }),
+  systemVoices: () => call<SystemVoice[]>("system_voices"),
+  setVoiceSettings: (settings: VoiceSettings) => call<void>("set_voice_settings", { settings }),
+  telegramStatus: () => call<TelegramStatus>("telegram_status"),
+  setTelegramToken: (token: string | null) => call<void>("set_telegram_token", { token }),
+  setTelegramEnabled: (enabled: boolean) => call<void>("set_telegram_enabled", { enabled }),
+  telegramPairingCode: () => call<string>("telegram_pairing_code"),
+  removeTelegramChat: (id: number) => call<void>("remove_telegram_chat", { id }),
+  /** Audio WAV 16 kHz mono ; `wake` : écoute du mot d'éveil. */
+  transcribe: (wav: Uint8Array, wake: boolean): Promise<Transcript> =>
+    inTauri
+      ? invoke<Transcript>("transcribe", wav, { headers: { wake: wake ? "1" : "0" } })
+      : mockInvoke<Transcript>("transcribe", { wake }),
+  /** Audio WAV de la réponse lue à voix haute (`null` hors de l'application). */
+  synthesize: (text: string): Promise<ArrayBuffer | null> =>
+    inTauri ? invoke<ArrayBuffer>("synthesize", { text }) : Promise.resolve(null),
   /** Abonnement aux événements des tâches de fond ; renvoie la fonction de désabonnement. */
   onAppEvent: (handler: (e: AppEvent) => void): (() => void) => {
     if (!inTauri) return mockListen(handler);

@@ -5,7 +5,7 @@ tourner des modèles de langage sur ta machine, en s'adaptant à sa puissance.
 
 Voir [PLAN.md](PLAN.md) pour la vision complète et la feuille de route.
 
-## État actuel (phases 0 à 5)
+## État actuel (phases 0 à 6)
 
 - Détection du matériel (processeur, mémoire, cartes graphiques via DXGI et NVML) et profil de machine S / M / L / XL.
 - Catalogue de modèles GGUF (Qwen 3.5, Gemma 4, Qwen 3.6/3.8…) classés selon ce qui tient en mémoire.
@@ -28,6 +28,9 @@ Voir [PLAN.md](PLAN.md) pour la vision complète et la feuille de route.
 - Mémoire à long terme : souvenirs rappelés dans les réponses, retenus automatiquement (modèle local) ou à la demande, consultables, modifiables, épinglables et supprimables.
 - Index des dossiers autorisés (texte, PDF, Word, Excel, PowerPoint, OpenDocument) : recherche hybride sens + mots (Qwen3-Embedding local, sqlite-vec, FTS5), mise à jour automatique à chaque modification.
 - Compétences apprises : après une tâche réussie, une procédure réutilisable est proposée ; validée, l'assistant s'en sert.
+- Voix, entièrement locale : dictée (whisper.cpp, modèle choisi selon la machine), mot d'éveil « Claudio » (facultatif), lecture des réponses par les voix Windows ou Piper.
+- Canal Telegram : parler à Claudio depuis son téléphone, conversations jumelées par code, autorisations par boutons.
+- Installateur Windows (NSIS, sans droits administrateur) et mise à jour automatique signée.
 
 ## Développement
 
@@ -55,7 +58,7 @@ Piloter le cœur sans interface :
 cargo run -p claudio-app --example cli -- recommend
 ```
 
-Autres commandes de l'outil : `status`, `runtime`, `install <id> <quant>`, `use <modèle>`, `search <texte>`, `repo <auteur/dépôt>`, `usage`, `chat "<texte>"`, `task "<objectif>"`, `index <dossier>`, `find "<question>"`, `memories`, `forget all`, `unindex <id>`.
+Autres commandes de l'outil : `status`, `runtime`, `install <id> <quant>`, `use <modèle>`, `search <texte>`, `repo <auteur/dépôt>`, `usage`, `chat "<texte>"`, `task "<objectif>"`, `index <dossier>`, `find "<question>"`, `memories`, `forget all`, `unindex <id>`, `voice`, `voice-install <élément>`, `say "<texte>" <fichier.wav>`, `hear <fichier.wav>`.
 
 Tests et vérifications (identiques à la CI) :
 
@@ -67,11 +70,25 @@ cargo test --workspace
 cargo clippy --workspace --all-targets -- -D warnings
 ```
 
-Produire l'installateur Windows (MSI et NSIS dans `target/release/bundle`) :
+Produire l'installateur Windows (NSIS, dans `target/release/bundle/nsis`) ; la variable `TAURI_SIGNING_PRIVATE_KEY` doit contenir la clé privée de signature des mises à jour (gardée hors du dépôt, dans `%USERPROFILE%\.tauri\claudio.key`) :
 
 ```bash
 npm --prefix apps/desktop run tauri build
 ```
+
+## Publication et mises à jour
+
+Une étiquette `vX.Y.Z` (même numéro que `apps/desktop/src-tauri/tauri.conf.json`) déclenche le workflow `Publication` : il construit l'installateur, le signe pour la mise à jour et publie une version GitHub avec `latest.json`. Le secret `TAURI_SIGNING_PRIVATE_KEY` du dépôt doit contenir la clé privée. Au démarrage, Claudio consulte `latest.json` et propose d'installer la nouvelle version ; il refuse toute archive dont la signature ne correspond pas à la clé publique inscrite dans `tauri.conf.json`.
+
+L'installateur n'est pas signé Authenticode : Windows SmartScreen affiche un avertissement au premier lancement (« Informations complémentaires » puis « Exécuter quand même »).
+
+## Telegram
+
+1. Dans Telegram, créer un robot avec @BotFather (`/newbot`) et copier son jeton.
+2. Dans Claudio › Voix et Telegram, coller le jeton, activer le canal, puis « Jumeler un téléphone ».
+3. Envoyer au robot `/jumeler CODE`. Commandes : `/nouveau` (nouvelle conversation), `/stop` (interrompre).
+
+Le robot ne répond qu'aux conversations privées jumelées. Les messages passent par les serveurs de Telegram ; le travail est fait sur l'ordinateur, qui doit rester allumé avec Claudio lancé. Depuis le téléphone, une autorisation ne peut être donnée que « une fois » ou « pour cette conversation ».
 
 Mettre à jour le catalogue de modèles après avoir modifié `catalog/sources.json` :
 
@@ -92,6 +109,7 @@ python -I scripts/update_catalog.py
 | `crates/claudio-agents` | Définitions d'agents (YAML) et plans en graphe |
 | `crates/claudio-docs` | Extraction de texte (PDF, Office, OpenDocument, HTML) et découpage en passages |
 | `crates/claudio-memory` | Index hybride, souvenirs, compétences |
+| `crates/claudio-voice` | Voix : installation de whisper.cpp et Piper, reconnaissance, mot d'éveil, synthèse |
 | `crates/claudio-app` | Services partagés par l'application et l'outil : routeur, boucle d'agent, tâches, planifications, hub, cloud, accès |
 | `agents/` | Agents fournis |
 | `apps/desktop` | Application Tauri 2 (React + TypeScript + Tailwind) |
@@ -105,6 +123,7 @@ python -I scripts/update_catalog.py
 | `%LOCALAPPDATA%\Claudio\claudio.db` | Conversations |
 | `%LOCALAPPDATA%\Claudio\models` | Modèles téléchargés |
 | `%LOCALAPPDATA%\Claudio\runtimes` | Moteurs llama.cpp |
+| `%LOCALAPPDATA%\Claudio\voice` | Moteurs et modèles de la voix |
 | `%LOCALAPPDATA%\Claudio\logs` | Journaux (niveau réglable avec `CLAUDIO_LOG`) |
 
 La variable `CLAUDIO_HOME` regroupe tout dans un seul dossier (mode portable).
