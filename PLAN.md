@@ -310,8 +310,20 @@ Mesuré sur la machine de développement (RTX 5070 Ti) : ~440 jetons/s avec Qwen
 - Interface : page « Agents » (lancement, liste, graphe des étapes en direct, détails, résultat, reprise), planifications avec préréglages, catalogue d'agents.
 - Testé en réel : objectif à deux créations indépendantes → deux étapes « développeur » simultanées sur Gemma 4 12B, puis relecture qui relit les fichiers ; ~40 s au total.
 
+### Phase 5 — livrée (2026-10-26)
+
+- `claudio-docs` : extraction de texte (TXT/Markdown/code avec repli Windows-1252, PDF page par page, Word, PowerPoint par diapositive, Excel/LibreOffice par feuille, OpenDocument, HTML) et découpage en passages (~1 200 caractères, recouvrement). L'outil `read_file` lit désormais PDF et documents Office.
+- Embeddings locaux : Qwen3-Embedding-0.6B (multilingue, 1024 dimensions) servi par un second llama-server en mode `--embedding`, **sur le processeur** pour laisser la carte graphique au modèle de conversation (mesuré : 55 jetons/s conservés, contre 7 quand les deux partageaient la VRAM).
+- `claudio-memory` : sqlite-vec (plus proches voisins) + FTS5 (insensible aux accents), fusion par rang réciproque ; sans modèle d'embeddings, recherche au mot près.
+- Index des dossiers : ajout depuis l'interface (accorde la lecture), parcours incrémental (date et taille), fichiers en échec mémorisés, fichiers supprimés retirés, surveillance des dossiers (notify) et réindexation au démarrage ; outil `search_documents`.
+- Mémoire : souvenirs par catégorie, épinglage, édition, suppression ; rappel des souvenirs utiles injecté dans les consignes ; outil `remember` ; extraction automatique après chaque échange par le modèle local uniquement (sortie JSON contrainte, souvenirs connus fournis pour éviter les doublons, déduplication par similarité ≥ 0,9).
+- Compétences (à la Hermes) : après une tâche réussie, proposition d'une procédure Markdown, à valider/corriger ; compétences validées listées dans les consignes et lues avec `read_skill`.
+- Interface : page « Mémoire » (souvenirs, documents avec essai de recherche, compétences), annonces « souvenir retenu » et « compétence proposée ».
+- Testé en réel : corpus texte/Markdown/Word → bonne source en tête pour 4 questions ; Gemma 4 12B cherche seul dans les documents et cite le fichier ; mémorisation à la demande et automatique ; tâche réussie → compétence « create-shopping-list » proposée.
+
 ### Reporté
 
+- Reconnaissance de caractères (OCR) des PDF scannés et des images.
 - Édition des agents dans l'interface (aujourd'hui : fichiers YAML).
 - Gestion de plusieurs modèles locaux chargés en même temps (un modèle partagé par les agents pour l'instant).
 - Lecture des PDF et documents Office (avec la phase 5, RAG).

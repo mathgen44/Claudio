@@ -72,6 +72,7 @@ export function Models() {
         {status.installed_models.map((m) => {
           const ref: ActiveModel = { source: "local", id: m.key };
           const isActive = sameModel(status.active_model, ref);
+          const isEmbedding = status.embedding_models.includes(m.key);
           return (
             <Card key={m.key} className="flex items-center justify-between gap-4 py-3">
               <div>
@@ -86,7 +87,11 @@ export function Models() {
                 </p>
               </div>
               <div className="flex gap-1">
-                {!isActive && <Button onClick={() => activate(ref)}>Utiliser</Button>}
+                {isEmbedding ? (
+                  <Badge>embeddings (Mémoire)</Badge>
+                ) : (
+                  !isActive && <Button onClick={() => activate(ref)}>Utiliser</Button>
+                )}
                 <Button variant="danger" onClick={() => remove(m.key, m.name)} aria-label="Supprimer">
                   <Trash2 size={16} />
                 </Button>

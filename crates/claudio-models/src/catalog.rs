@@ -26,6 +26,15 @@ pub struct CatalogModel {
     pub kv_kb_per_token: u64,
     pub context_max: u32,
     pub roles: Vec<String>,
+    /// Modèles d'embeddings : regroupement des vecteurs (`last`, `mean`, `cls`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pooling: Option<String>,
+    /// Modèles d'embeddings : dimension des vecteurs.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub dims: Option<u32>,
+    /// Modèles d'embeddings : préfixe à placer devant une requête de recherche.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub query_prefix: Option<String>,
     pub description: String,
     pub quants: Vec<Quant>,
 }
@@ -40,6 +49,10 @@ pub struct Quant {
 impl CatalogModel {
     pub fn is_moe(&self) -> bool {
         self.active_params_b < self.params_b
+    }
+
+    pub fn is_embedding(&self) -> bool {
+        self.roles.iter().any(|r| r == "embedding")
     }
 
     pub fn quant(&self, name: &str) -> Option<&Quant> {

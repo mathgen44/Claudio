@@ -74,6 +74,7 @@ export interface Status {
   ollama_models: OllamaModel[] | null;
   installed_models: InstalledModel[];
   has_hf_token: boolean;
+  embedding_models: string[];
   onboarding_done: boolean;
   models_dir: string;
 }
@@ -118,6 +119,65 @@ export interface Config {
   permissions: Permissions;
   mcp_servers: McpServer[];
   tools_enabled: boolean;
+  memory: MemorySettings;
+}
+
+export interface MemorySettings {
+  auto_extract: boolean;
+  recall: boolean;
+  learn_skills: boolean;
+}
+
+export interface Memory {
+  id: number;
+  content: string;
+  category: string;
+  source: "manuel" | "assistant" | "auto";
+  session_id: string | null;
+  pinned: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+export const MEMORY_CATEGORIES = ["préférence", "personnel", "travail", "projet", "autre"];
+
+export interface IndexSource {
+  id: number;
+  path: string;
+  enabled: boolean;
+  status: "idle" | "scanning" | "embedding" | "error";
+  error: string | null;
+  last_scan: string | null;
+  files: number;
+  failed_files: number;
+  chunks: number;
+  embedded_chunks: number;
+}
+
+export interface KnowledgeStatus {
+  embedding_model: string | null;
+  recommended: [string, string] | null;
+  sources: IndexSource[];
+  pending_embeddings: number;
+}
+
+export interface DocHit {
+  path: string;
+  location: string | null;
+  text: string;
+  score: number;
+}
+
+export interface Skill {
+  name: string;
+  description: string;
+  body: string;
+}
+
+export interface SkillProposal extends Skill {
+  id: number;
+  origin: string;
+  created_at: string;
 }
 
 export type Policy = "ask" | "allow" | "deny";
@@ -259,7 +319,11 @@ export type AppEvent =
   | { type: "task_updated"; task_id: string }
   | { type: "step_output"; task_id: string; step_id: string; text: string }
   | ({ type: "approval"; task_id: string; task_title: string; step_title: string } & ApprovalRequest)
-  | { type: "task_finished"; task_id: string; title: string; status: TaskStatus };
+  | { type: "task_finished"; task_id: string; title: string; status: TaskStatus }
+  | { type: "index_updated"; source_id: number }
+  | { type: "index_progress"; source_id: number; done: number; total: number; path: string }
+  | { type: "memory_learned"; content: string }
+  | { type: "skill_proposed"; id: number; name: string };
 
 export interface ToolTrace {
   name: string;
@@ -441,7 +505,7 @@ export const api = {
   config: () => call<Config>("get_config"),
   updateSettings: (patch: SettingsPatch) => call<Config>("update_settings", { patch }),
   setHfToken: (token: string | null) => call<void>("set_hf_token", { token }),
-  openFolder: (which: "logs" | "models" | "data" | "workspace" | "agents") => call<void>("open_folder", { which }),
+  openFolder: (which: "logs" | "models" | "data" | "workspace" | "agents" | "skills") => call<void>("open_folder", { which }),
   sessions: () => call<Session[]>("list_sessions"),
   createSession: () => call<Session>("create_session"),
   renameSession: (id: string, title: string) => call<void>("rename_session", { id, title }),
@@ -500,6 +564,26 @@ export const api = {
   setScheduleEnabled: (id: number, enabled: boolean) => call<void>("set_schedule_enabled", { id, enabled }),
   deleteSchedule: (id: number) => call<void>("delete_schedule", { id }),
   runScheduleNow: (id: number) => call<string>("run_schedule_now", { id }),
+  knowledgeStatus: () => call<KnowledgeStatus>("knowledge_status"),
+  addIndexSource: (path: string) => call<number>("add_index_source", { path }),
+  removeIndexSource: (id: number) => call<void>("remove_index_source", { id }),
+  reindexSource: (id: number) => call<void>("reindex_source", { id }),
+  reindexAll: () => call<void>("reindex_all"),
+  searchDocuments: (query: string) => call<DocHit[]>("search_documents", { query }),
+  listMemories: (filter: string | null) => call<Memory[]>("list_memories", { filter }),
+  addMemory: (content: string, category: string) => call<Memory>("add_memory", { content, category }),
+  updateMemory: (id: number, content: string, category: string, pinned: boolean) =>
+    call<Memory>("update_memory", { id, content, category, pinned }),
+  deleteMemory: (id: number) => call<void>("delete_memory", { id }),
+  deleteAllMemories: () => call<number>("delete_all_memories"),
+  setMemorySettings: (settings: MemorySettings) => call<void>("set_memory_settings", { settings }),
+  listSkills: () => call<Skill[]>("list_skills"),
+  saveSkill: (name: string, description: string, body: string) => call<string>("save_skill", { name, description, body }),
+  deleteSkill: (name: string) => call<void>("delete_skill", { name }),
+  skillProposals: () => call<SkillProposal[]>("skill_proposals"),
+  acceptSkill: (id: number, name: string, description: string, body: string) =>
+    call<string>("accept_skill", { id, name, description, body }),
+  rejectSkill: (id: number) => call<void>("reject_skill", { id }),
   /** Abonnement aux événements des tâches de fond ; renvoie la fonction de désabonnement. */
   onAppEvent: (handler: (e: AppEvent) => void): (() => void) => {
     if (!inTauri) return mockListen(handler);
@@ -529,6 +613,9 @@ export function toolLabel(name: string): string {
     web_fetch: "Page web",
     web_search: "Recherche web",
     run_powershell: "PowerShell",
+    search_documents: "Recherche dans les documents",
+    remember: "Mémorisation",
+    read_skill: "Lecture d'une compétence",
   };
   if (name.startsWith("mcp__")) {
     const [, server, tool] = name.split("__");

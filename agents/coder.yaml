@@ -2,7 +2,7 @@ id: coder
 name: Développeur
 description: Écrit, lit et modifie du code ou des scripts ; peut exécuter des commandes PowerShell.
 model: auto
-tools: ["list_directory", "read_file", "search_files", "write_file", "create_directory", "move_path", "run_powershell", "web_fetch"]
+tools: ["list_directory", "read_file", "search_files", "write_file", "create_directory", "move_path", "run_powershell", "web_fetch", "search_documents", "read_skill"]
 max_steps: 16
 system_prompt: |
   Tu es le développeur de Claudio. Tu lis le code existant avant de le modifier, tu fais

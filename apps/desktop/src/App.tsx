@@ -1,5 +1,5 @@
 import clsx from "clsx";
-import { Bot, Boxes, Cloud as CloudIcon, MessageSquare, ScrollText, Settings as SettingsIcon, ShieldCheck } from "lucide-react";
+import { Bot, Boxes, Brain, Cloud as CloudIcon, MessageSquare, ScrollText, Settings as SettingsIcon, ShieldCheck } from "lucide-react";
 import { useEffect, useState, type ReactNode } from "react";
 import { api, type AppEvent } from "./api";
 import { ApprovalDialog } from "./components/ApprovalDialog";
@@ -12,10 +12,11 @@ import { Chat } from "./views/Chat";
 import { Cloud } from "./views/Cloud";
 import { Models } from "./views/Models";
 import { Journal } from "./views/Journal";
+import { Memory } from "./views/Memory";
 import { Onboarding } from "./views/Onboarding";
 import { Settings } from "./views/Settings";
 
-type View = "chat" | "agents" | "models" | "cloud" | "access" | "journal" | "settings" | "onboarding";
+type View = "chat" | "agents" | "memory" | "models" | "cloud" | "access" | "journal" | "settings" | "onboarding";
 
 export default function App() {
   return (
@@ -30,14 +31,24 @@ function Shell() {
   const [view, setView] = useState<View | null>(null);
   // Demandes d'autorisation des tâches de fond, visibles depuis tous les écrans.
   const [taskApprovals, setTaskApprovals] = useState<Extract<AppEvent, { type: "approval" }>[]>([]);
+  // Petites annonces : souvenir retenu, compétence proposée.
+  const [toast, setToast] = useState<{ text: string; view: View } | null>(null);
 
   useEffect(
     () =>
       api.onAppEvent((e) => {
         if (e.type === "approval") setTaskApprovals((a) => [...a, e]);
+        if (e.type === "memory_learned") setToast({ text: `Retenu : ${e.content}`, view: "memory" });
+        if (e.type === "skill_proposed") setToast({ text: `Nouvelle compétence proposée : ${e.name}`, view: "memory" });
       }),
     [],
   );
+
+  useEffect(() => {
+    if (!toast) return;
+    const t = window.setTimeout(() => setToast(null), 6000);
+    return () => window.clearTimeout(t);
+  }, [toast]);
 
   useEffect(() => {
     if (status && view == null) setView(status.onboarding_done ? "chat" : "onboarding");
@@ -66,6 +77,9 @@ function Shell() {
         </NavButton>
         <NavButton label="Agents et tâches" active={view === "agents"} onClick={() => setView("agents")}>
           <Bot size={20} />
+        </NavButton>
+        <NavButton label="Mémoire" active={view === "memory"} onClick={() => setView("memory")}>
+          <Brain size={20} />
         </NavButton>
         <NavButton label="Modèles" active={view === "models"} onClick={() => setView("models")}>
           <Boxes size={20} />
@@ -96,6 +110,7 @@ function Shell() {
           {view === "onboarding" && <Onboarding onDone={() => setView("chat")} />}
           {view === "chat" && <Chat onOpenModels={() => setView("models")} />}
           {view === "agents" && <Agents />}
+          {view === "memory" && <Memory />}
           {view === "models" && <Models />}
           {view === "cloud" && <Cloud />}
           {view === "access" && <Access />}
@@ -103,6 +118,16 @@ function Shell() {
           {view === "settings" && <Settings onRestartOnboarding={() => setView("onboarding")} />}
         </div>
       </main>
+      {toast && (
+        <button
+          role="status"
+          onClick={() => (setView(toast.view), setToast(null))}
+          className="fixed right-4 bottom-4 z-40 max-w-sm rounded-lg border border-[var(--border)] bg-[var(--panel)] px-4 py-3 text-left text-sm shadow-lg"
+        >
+          <Brain size={14} className="mr-1.5 inline text-[var(--accent)]" />
+          {toast.text}
+        </button>
+      )}
       {taskApprovals[0] && (
         <ApprovalDialog
           request={taskApprovals[0]}

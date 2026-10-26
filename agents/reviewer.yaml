@@ -2,7 +2,7 @@ id: reviewer
 name: Relecteur
 description: Vérifie les résultats des autres agents et rédige la réponse finale.
 model: auto
-tools: ["read_file", "list_directory"]
+tools: ["read_file", "list_directory", "search_documents"]
 max_steps: 6
 system_prompt: |
   Tu es le relecteur de Claudio. Tu vérifies que les résultats répondent bien à l'objectif,

@@ -27,6 +27,8 @@ pub struct ServerConfig {
     /// Demandes traitées en même temps (agents en parallèle) ; le contexte est
     /// partagé entre elles (`--kv-unified`).
     pub parallel: u32,
+    /// Serveur d'embeddings : mode de regroupement des vecteurs (`last`, `mean`…).
+    pub embedding_pooling: Option<String>,
 }
 
 impl ServerConfig {
@@ -47,10 +49,22 @@ impl ServerConfig {
             "--parallel".into(),
             self.parallel.max(1).to_string(),
             "--kv-unified".into(),
-            // Modèle de conversation intégré au fichier GGUF (outils, raisonnement).
-            "--jinja".into(),
             "--no-webui".into(),
         ];
+        if let Some(pooling) = &self.embedding_pooling {
+            // Un passage entier doit tenir dans un lot.
+            let batch = self.context.to_string();
+            a.extend(["--embedding".into(), "--pooling".into(), pooling.clone()]);
+            a.extend([
+                "--batch-size".into(),
+                batch.clone(),
+                "--ubatch-size".into(),
+                batch,
+            ]);
+        } else {
+            // Modèle de conversation intégré au fichier GGUF (outils, raisonnement).
+            a.push("--jinja".into());
+        }
         if self.use_gpu {
             // Attention optimisée et cache KV quantifié : moitié moins de mémoire.
             a.extend(

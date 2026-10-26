@@ -5,6 +5,7 @@ use std::sync::Arc;
 
 use claudio_app::claudio_agents::AgentDef;
 use claudio_app::claudio_core::audit::AuditEntry;
+use claudio_app::claudio_core::config::MemorySettings;
 use claudio_app::claudio_core::config::{
     ActiveModel, Budget, CloudModel, McpServerConfig, McpTransport, Permissions, ProviderKind,
     RoutingMode,
@@ -13,13 +14,16 @@ use claudio_app::claudio_core::tasks::{Schedule, Task, TaskStatus};
 use claudio_app::claudio_core::{AppPaths, Config, Message, Session};
 use claudio_app::claudio_llm::providers::RemoteModel;
 use claudio_app::claudio_llm::runtime::{InstallEvent, InstalledRuntime};
+use claudio_app::claudio_memory::index::Hit;
+use claudio_app::claudio_memory::memories::Memory;
+use claudio_app::claudio_memory::skills::{Proposal, Skill};
 use claudio_app::claudio_models::hf::ModelSummary;
 use claudio_app::claudio_models::{InstalledModel, Progress};
 use claudio_app::claudio_perms::Answer;
 use claudio_app::claudio_tools::mcp::McpTool;
 use claudio_app::{
-    AccessOverview, AppEvent, BudgetStatus, Claudio, ProviderView, Recommendation, Reply, RepoView,
-    ScheduleView, Status, StreamEvent, TaskDetail, UsageReport,
+    AccessOverview, AppEvent, BudgetStatus, Claudio, KnowledgeStatus, ProviderView, Recommendation,
+    Reply, RepoView, ScheduleView, Status, StreamEvent, TaskDetail, UsageReport,
 };
 use serde::Deserialize;
 use tauri::ipc::Channel;
@@ -152,6 +156,7 @@ fn open_folder(app: App<'_>, which: String) -> CmdResult<()> {
         "data" => app.paths.data_dir.clone(),
         "workspace" => app.paths.workspace_dir(),
         "agents" => app.paths.agents_dir(),
+        "skills" => app.paths.skills_dir(),
         _ => return Err("dossier inconnu".into()),
     };
     tauri_plugin_opener::open_path(path, None::<&str>).map_err(|e| e.to_string())
@@ -475,6 +480,117 @@ fn run_schedule_now(app: App<'_>, id: i64) -> CmdResult<String> {
     app.inner().run_schedule_now(id).map_err(err)
 }
 
+// ---- Mémoire, documents, compétences --------------------------------------------
+
+#[tauri::command]
+fn knowledge_status(app: App<'_>) -> CmdResult<KnowledgeStatus> {
+    app.knowledge_status().map_err(err)
+}
+
+#[tauri::command]
+fn add_index_source(app: App<'_>, path: String) -> CmdResult<i64> {
+    app.inner()
+        .add_index_source(std::path::Path::new(&path))
+        .map_err(err)
+}
+
+#[tauri::command]
+fn remove_index_source(app: App<'_>, id: i64) -> CmdResult<()> {
+    app.inner().remove_index_source(id).map_err(err)
+}
+
+#[tauri::command]
+fn reindex_source(app: App<'_>, id: i64) {
+    app.inner().reindex(id);
+}
+
+#[tauri::command]
+fn reindex_all(app: App<'_>) -> CmdResult<()> {
+    app.inner().reindex_all().map_err(err)
+}
+
+#[tauri::command]
+async fn search_documents(app: App<'_>, query: String) -> CmdResult<Vec<Hit>> {
+    app.search_documents(&query, 8).await.map_err(err)
+}
+
+#[tauri::command]
+fn list_memories(app: App<'_>, filter: Option<String>) -> CmdResult<Vec<Memory>> {
+    app.memories(filter.as_deref()).map_err(err)
+}
+
+#[tauri::command]
+async fn add_memory(app: App<'_>, content: String, category: String) -> CmdResult<Memory> {
+    app.add_memory(&content, &category).await.map_err(err)
+}
+
+#[tauri::command]
+async fn update_memory(
+    app: App<'_>,
+    id: i64,
+    content: String,
+    category: String,
+    pinned: bool,
+) -> CmdResult<Memory> {
+    app.update_memory(id, &content, &category, pinned)
+        .await
+        .map_err(err)
+}
+
+#[tauri::command]
+fn delete_memory(app: App<'_>, id: i64) -> CmdResult<()> {
+    app.delete_memory(id).map_err(err)
+}
+
+#[tauri::command]
+fn delete_all_memories(app: App<'_>) -> CmdResult<usize> {
+    app.delete_all_memories().map_err(err)
+}
+
+#[tauri::command]
+fn set_memory_settings(app: App<'_>, settings: MemorySettings) -> CmdResult<()> {
+    app.update_config(|c| c.memory = settings)
+        .map(|_| ())
+        .map_err(err)
+}
+
+#[tauri::command]
+fn list_skills(app: App<'_>) -> Vec<Skill> {
+    app.skills()
+}
+
+#[tauri::command]
+fn save_skill(app: App<'_>, name: String, description: String, body: String) -> CmdResult<String> {
+    app.save_skill(&name, &description, &body).map_err(err)
+}
+
+#[tauri::command]
+fn delete_skill(app: App<'_>, name: String) -> CmdResult<()> {
+    app.delete_skill(&name).map_err(err)
+}
+
+#[tauri::command]
+fn skill_proposals(app: App<'_>) -> CmdResult<Vec<Proposal>> {
+    app.skill_proposals().map_err(err)
+}
+
+#[tauri::command]
+fn accept_skill(
+    app: App<'_>,
+    id: i64,
+    name: String,
+    description: String,
+    body: String,
+) -> CmdResult<String> {
+    app.accept_skill(id, &name, &description, &body)
+        .map_err(err)
+}
+
+#[tauri::command]
+fn reject_skill(app: App<'_>, id: i64) -> CmdResult<()> {
+    app.reject_skill(id).map_err(err)
+}
+
 fn show_window(app: &AppHandle) {
     if let Some(w) = app.get_webview_window("main") {
         let _ = w.show();
@@ -564,6 +680,14 @@ pub fn run() {
                 install_event_sink(app.handle(), &claudio);
                 install_tray(app)?;
                 tauri::async_runtime::spawn(claudio.clone().scheduler_loop());
+                // Index : remise à jour au démarrage, puis surveillance des dossiers.
+                let c = claudio.clone();
+                tauri::async_runtime::spawn(async move {
+                    if let Err(e) = c.reindex_all() {
+                        tracing::warn!("réindexation : {e:#}");
+                    }
+                    c.refresh_watchers();
+                });
                 Ok(())
             }
         })
@@ -637,6 +761,24 @@ pub fn run() {
             set_schedule_enabled,
             delete_schedule,
             run_schedule_now,
+            knowledge_status,
+            add_index_source,
+            remove_index_source,
+            reindex_source,
+            reindex_all,
+            search_documents,
+            list_memories,
+            add_memory,
+            update_memory,
+            delete_memory,
+            delete_all_memories,
+            set_memory_settings,
+            list_skills,
+            save_skill,
+            delete_skill,
+            skill_proposals,
+            accept_skill,
+            reject_skill,
         ])
         .build(tauri::generate_context!())
         .expect("construction de l'application")

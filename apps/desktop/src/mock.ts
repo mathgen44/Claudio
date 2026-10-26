@@ -2,6 +2,10 @@
 // navigateur sans le cœur Rust (`npm run dev`). Jamais utilisée dans l'application.
 
 import type {
+  KnowledgeStatus,
+  Memory,
+  Skill,
+  SkillProposal,
   AccessOverview,
   AgentDef,
   AppEvent,
@@ -46,7 +50,21 @@ const config: Config = {
   permissions: { network: "ask", shell: "ask", shell_sandbox: true, mcp: "ask", allow_private_network: false },
   mcp_servers: [],
   tools_enabled: true,
+  memory: { auto_extract: true, recall: true, learn_skills: true },
 };
+
+const memoriesMock: Memory[] = [
+  { id: 1, content: "L'utilisateur préfère des réponses courtes.", category: "préférence", source: "manuel", session_id: null, pinned: true, created_at: "2026-10-20T10:00:00Z", updated_at: "2026-10-20T10:00:00Z" },
+  { id: 2, content: "L'utilisateur fait du vélo tous les dimanches avec son club.", category: "personnel", source: "auto", session_id: null, pinned: false, created_at: "2026-10-25T10:00:00Z", updated_at: "2026-10-25T10:00:00Z" },
+];
+const knowledgeMock: KnowledgeStatus = {
+  embedding_model: "Qwen3 Embedding 0.6B",
+  recommended: ["qwen3-embedding-0.6b", "Q8_0"],
+  pending_embeddings: 0,
+  sources: [{ id: 1, path: "D:\\Documents\\Maison", enabled: true, status: "idle", error: null, last_scan: "2026-10-26T15:00:00Z", files: 128, failed_files: 2, chunks: 942, embedded_chunks: 942 }],
+};
+const skillsMock: Skill[] = [{ name: "revue-de-presse", description: "Faire une revue de presse sur un sujet.", body: "1. Chercher avec web_search\n2. Lire 3 à 5 articles\n3. Résumer avec les sources" }];
+const proposalsMock: SkillProposal[] = [{ id: 1, name: "liste-de-courses", description: "Préparer une liste de courses classée par rayon à partir de menus.", body: "## Étapes\n1. Définir les menus\n2. Extraire les ingrédients\n3. Classer par rayon", origin: "Liste de courses végétarienne", created_at: "2026-10-26T15:00:00Z" }];
 
 const access: AccessOverview = {
   workspace: "C:\\Users\\vous\\AppData\\Local\\Claudio\\workspace",
@@ -158,6 +176,7 @@ function status(): Status {
     ollama_models: [{ name: "llama3.2:3b", size: 2e9, details: { parameter_size: "3.2B", quantization_level: "Q4_K_M" } }],
     installed_models: installed,
     has_hf_token: false,
+    embedding_models: [],
     onboarding_done: config.onboarding_done,
     models_dir: "C:\\Users\\vous\\AppData\\Local\\Claudio\\models",
   };
@@ -460,6 +479,55 @@ export async function mockInvoke<T>(cmd: string, args: Record<string, any> = {})
       return r(undefined);
     case "run_schedule_now":
       return r("x");
+    case "knowledge_status":
+      return r(knowledgeMock);
+    case "add_index_source":
+      knowledgeMock.sources.push({ id: knowledgeMock.sources.length + 1, path: args.path, enabled: true, status: "idle", error: null, last_scan: new Date().toISOString(), files: 12, failed_files: 0, chunks: 40, embedded_chunks: 40 });
+      return r(knowledgeMock.sources.length);
+    case "remove_index_source":
+      knowledgeMock.sources = knowledgeMock.sources.filter((s) => s.id !== args.id);
+      return r(undefined);
+    case "reindex_source":
+    case "reindex_all":
+    case "set_memory_settings":
+      return r(undefined);
+    case "search_documents":
+      return r([{ path: "D:\\Documents\\Maison\\factures\\edf-septembre.pdf", location: "page 1", text: "Facture EDF - septembre 2026\nMontant TTC : 104,20 euros", score: 0.03 }]);
+    case "list_memories":
+      return r(memoriesMock.filter((m) => !args.filter || m.content.toLowerCase().includes(String(args.filter).toLowerCase())));
+    case "add_memory": {
+      const now = new Date().toISOString();
+      const m: Memory = { id: Date.now(), content: args.content, category: args.category, source: "manuel", session_id: null, pinned: false, created_at: now, updated_at: now };
+      memoriesMock.unshift(m);
+      return r(m);
+    }
+    case "update_memory": {
+      const m = memoriesMock.find((x) => x.id === args.id)!;
+      Object.assign(m, { content: args.content, category: args.category, pinned: args.pinned });
+      return r(m);
+    }
+    case "delete_memory":
+      memoriesMock.splice(memoriesMock.findIndex((m) => m.id === args.id), 1);
+      return r(undefined);
+    case "delete_all_memories":
+      return r(memoriesMock.splice(0).length);
+    case "list_skills":
+      return r(skillsMock);
+    case "save_skill":
+      skillsMock.push({ name: args.name, description: args.description, body: args.body });
+      return r(args.name);
+    case "delete_skill":
+      skillsMock.splice(skillsMock.findIndex((s) => s.name === args.name), 1);
+      return r(undefined);
+    case "skill_proposals":
+      return r(proposalsMock);
+    case "accept_skill":
+      skillsMock.push({ name: args.name, description: args.description, body: args.body });
+      proposalsMock.splice(0);
+      return r(args.name);
+    case "reject_skill":
+      proposalsMock.splice(0);
+      return r(undefined);
     case "set_session_route":
       sessions.find((s) => s.id === args.sessionId)!.route = args.mode;
       return r(undefined);

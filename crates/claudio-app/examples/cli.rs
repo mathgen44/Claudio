@@ -160,8 +160,72 @@ async fn main() -> Result<()> {
                         d.task.tokens,
                         d.task.result.unwrap_or_default()
                     );
+                    // Laisse la proposition de compétence (en arrière-plan) se terminer.
+                    if std::env::var_os("CLAUDIO_WAIT").is_some() {
+                        tokio::time::sleep(std::time::Duration::from_secs(40)).await;
+                        for p in app.skill_proposals()? {
+                            println!(
+                                "\n=== Compétence proposée : {} — {}\n{}",
+                                p.name, p.description, p.body
+                            );
+                        }
+                    }
                     break;
                 }
+            }
+        }
+        ["index", path] => {
+            let id = app.add_index_source(std::path::Path::new(path))?;
+            loop {
+                tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+                let st = app.knowledge_status()?;
+                let s = st.sources.iter().find(|s| s.id == id).expect("dossier");
+                if s.status == "idle" || s.status == "error" {
+                    println!(
+                        "{} : {} fichiers ({} en échec), {} passages, {} vecteurs{}",
+                        s.path,
+                        s.files,
+                        s.failed_files,
+                        s.chunks,
+                        s.embedded_chunks,
+                        s.error
+                            .as_deref()
+                            .map(|e| format!(" — {e}"))
+                            .unwrap_or_default()
+                    );
+                    break;
+                }
+            }
+        }
+        ["find", query] => {
+            for h in app.search_documents(query, 5).await? {
+                println!(
+                    "[{:.3}] {} {}\n    {}",
+                    h.score,
+                    h.path,
+                    h.location.unwrap_or_default(),
+                    h.text
+                        .chars()
+                        .take(160)
+                        .collect::<String>()
+                        .replace('\n', " ")
+                );
+            }
+        }
+        ["forget", "all"] => println!("{} souvenirs effacés", app.delete_all_memories()?),
+        ["unindex", id] => {
+            app.remove_index_source(id.parse()?)?;
+            println!("dossier retiré de l'index");
+        }
+        ["memories"] => {
+            for m in app.memories(None)? {
+                println!(
+                    "#{} [{}{}] {}",
+                    m.id,
+                    m.category,
+                    if m.pinned { ", épinglé" } else { "" },
+                    m.content
+                );
             }
         }
         ["usage"] => println!("{}", serde_json::to_string_pretty(&app.usage_report()?)?),
@@ -208,6 +272,10 @@ async fn main() -> Result<()> {
                     std::io::stdout().flush().ok();
                 })
                 .await?;
+            // Laisse l'extraction des souvenirs (en arrière-plan) se terminer.
+            if std::env::var_os("CLAUDIO_WAIT").is_some() {
+                tokio::time::sleep(std::time::Duration::from_secs(25)).await;
+            }
             println!(
                 "\n\n[{} jetons, {:.1} jetons/s, {} ms]",
                 reply.message.tokens.unwrap_or(0),

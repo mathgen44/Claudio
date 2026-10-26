@@ -11,9 +11,15 @@
       "quality": 20,
       "kv_kb_per_token": 112,
       "context_max": 32768,
-      "roles": ["chat", "router"],
+      "roles": [
+        "chat",
+        "router"
+      ],
       "description": "Très petit et très rapide : tri des demandes, résumés courts, machines modestes.",
-      "quants": ["Q4_K_M", "Q8_0"]
+      "quants": [
+        "Q4_K_M",
+        "Q8_0"
+      ]
     },
     {
       "id": "qwen3.5-2b",
@@ -25,9 +31,16 @@
       "quality": 32,
       "kv_kb_per_token": 112,
       "context_max": 32768,
-      "roles": ["chat", "router"],
+      "roles": [
+        "chat",
+        "router"
+      ],
       "description": "Léger, adapté aux portables sans carte graphique dédiée.",
-      "quants": ["Q4_K_M", "Q5_K_M", "Q8_0"]
+      "quants": [
+        "Q4_K_M",
+        "Q5_K_M",
+        "Q8_0"
+      ]
     },
     {
       "id": "qwen3.5-4b",
@@ -39,9 +52,16 @@
       "quality": 45,
       "kv_kb_per_token": 144,
       "context_max": 32768,
-      "roles": ["chat"],
+      "roles": [
+        "chat"
+      ],
       "description": "Bon compromis pour les cartes graphiques de 4 à 6 Go ou un processeur récent.",
-      "quants": ["Q4_K_M", "Q5_K_M", "Q6_K", "Q8_0"]
+      "quants": [
+        "Q4_K_M",
+        "Q5_K_M",
+        "Q6_K",
+        "Q8_0"
+      ]
     },
     {
       "id": "qwen3.5-9b",
@@ -53,9 +73,17 @@
       "quality": 58,
       "kv_kb_per_token": 144,
       "context_max": 32768,
-      "roles": ["chat"],
+      "roles": [
+        "chat"
+      ],
       "description": "Polyvalent et solide, idéal pour les cartes de 8 Go et plus.",
-      "quants": ["Q3_K_M", "Q4_K_M", "Q5_K_M", "Q6_K", "Q8_0"]
+      "quants": [
+        "Q3_K_M",
+        "Q4_K_M",
+        "Q5_K_M",
+        "Q6_K",
+        "Q8_0"
+      ]
     },
     {
       "id": "gemma-4-12b",
@@ -67,9 +95,17 @@
       "quality": 63,
       "kv_kb_per_token": 384,
       "context_max": 32768,
-      "roles": ["chat"],
+      "roles": [
+        "chat"
+      ],
       "description": "Excellent en français et en rédaction, pour les cartes de 10 à 16 Go.",
-      "quants": ["Q3_K_M", "Q4_K_M", "Q5_K_M", "Q6_K", "Q8_0"]
+      "quants": [
+        "Q3_K_M",
+        "Q4_K_M",
+        "Q5_K_M",
+        "Q6_K",
+        "Q8_0"
+      ]
     },
     {
       "id": "gemma-4-26b-a4b",
@@ -81,9 +117,16 @@
       "quality": 70,
       "kv_kb_per_token": 192,
       "context_max": 32768,
-      "roles": ["chat"],
+      "roles": [
+        "chat"
+      ],
       "description": "Mélange d'experts : qualité d'un gros modèle avec la vitesse d'un petit. Cartes de 16 Go et plus.",
-      "quants": ["UD-Q3_K_M", "UD-IQ4_XS", "UD-Q4_K_M", "Q8_0"]
+      "quants": [
+        "UD-Q3_K_M",
+        "UD-IQ4_XS",
+        "UD-Q4_K_M",
+        "Q8_0"
+      ]
     },
     {
       "id": "qwen3.6-35b-a3b",
@@ -95,9 +138,16 @@
       "quality": 74,
       "kv_kb_per_token": 96,
       "context_max": 32768,
-      "roles": ["chat"],
+      "roles": [
+        "chat"
+      ],
       "description": "Mélange d'experts très rapide et très capable, pour les cartes de 20 Go et plus.",
-      "quants": ["UD-Q3_K_M", "UD-IQ4_XS", "UD-Q4_K_M", "Q8_0"]
+      "quants": [
+        "UD-Q3_K_M",
+        "UD-IQ4_XS",
+        "UD-Q4_K_M",
+        "Q8_0"
+      ]
     },
     {
       "id": "qwen3.8-27b",
@@ -109,9 +159,38 @@
       "quality": 78,
       "kv_kb_per_token": 256,
       "context_max": 32768,
-      "roles": ["chat"],
+      "roles": [
+        "chat"
+      ],
       "description": "Le plus capable du catalogue : raisonnement et code, pour les cartes de 20 Go et plus.",
-      "quants": ["UD-IQ4_XS", "UD-Q4_K_M", "UD-Q5_K_M", "UD-Q6_K", "Q8_0"]
+      "quants": [
+        "UD-IQ4_XS",
+        "UD-Q4_K_M",
+        "UD-Q5_K_M",
+        "UD-Q6_K",
+        "Q8_0"
+      ]
+    },
+    {
+      "id": "qwen3-embedding-0.6b",
+      "name": "Qwen3 Embedding 0.6B",
+      "repo": "Qwen/Qwen3-Embedding-0.6B-GGUF",
+      "license": "apache-2.0",
+      "params_b": 0.6,
+      "active_params_b": 0.6,
+      "quality": 50,
+      "kv_kb_per_token": 112,
+      "context_max": 8192,
+      "roles": [
+        "embedding"
+      ],
+      "pooling": "last",
+      "dims": 1024,
+      "query_prefix": "Instruct: Given a search query, retrieve relevant passages that answer the query\nQuery: ",
+      "description": "Modèle d'embeddings multilingue (français compris) pour la recherche dans vos documents et la mémoire.",
+      "quants": [
+        "Q8_0"
+      ]
     }
   ]
 }

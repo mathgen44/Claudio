@@ -9,6 +9,7 @@ authors.workspace = true
 anyhow = "1.0.104"
 chrono = "0.4.45"
 claudio-core = { version = "0.1.0", path = "../claudio-core" }
+claudio-docs = { version = "0.1.0", path = "../claudio-docs" }
 claudio-perms = { version = "0.1.0", path = "../claudio-perms" }
 futures-util = "0.3.34"
 globset = "0.4.20"

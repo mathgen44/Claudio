@@ -51,6 +51,18 @@ pub enum AppEvent {
         title: String,
         status: TaskStatus,
     },
+    /// L'état d'un dossier indexé a changé.
+    IndexUpdated { source_id: i64 },
+    IndexProgress {
+        source_id: i64,
+        done: usize,
+        total: usize,
+        path: String,
+    },
+    /// Un souvenir a été retenu.
+    MemoryLearned { content: String },
+    /// Une compétence est proposée à la validation.
+    SkillProposed { id: i64, name: String },
 }
 
 pub type EventSink = Arc<dyn Fn(AppEvent) + Send + Sync>;
@@ -251,6 +263,14 @@ impl Claudio {
                 .flatten()
                 .map(|(t, _)| t.title)
                 .unwrap_or_default();
+            if status == TaskStatus::Done && app.config().memory.learn_skills {
+                let (app2, id2) = (app.clone(), id.clone());
+                tokio::spawn(async move {
+                    if let Err(e) = app2.propose_skill(&id2).await {
+                        tracing::debug!("proposition de compétence : {e:#}");
+                    }
+                });
+            }
             app.emit_event(AppEvent::TaskUpdated {
                 task_id: id.clone(),
             });
@@ -544,10 +564,13 @@ impl Claudio {
             "\n\nTu travailles en autonomie, sans pouvoir poser de question : fais au mieux \
              puis rends ton résultat complet, en français.",
         );
+        let extra = self
+            .knowledge_context(&step.instructions, !tools.is_empty())
+            .await;
         let messages = vec![
             ChatMessage::text(
                 "system",
-                self.system_prompt(&agent.system_prompt, &scope, !tools.is_empty()),
+                self.system_prompt(&agent.system_prompt, &scope, !tools.is_empty()) + &extra,
             ),
             ChatMessage::text("user", user),
         ];
@@ -656,7 +679,7 @@ async fn wait_cancel(cancel: &CancelToken) {
 }
 
 /// Le planificateur n'a pas d'outils : toute demande est refusée.
-struct DenyAll;
+pub(crate) struct DenyAll;
 
 impl Approver for DenyAll {
     fn ask<'a>(&'a self, _: &'a str, _: &'a Approval) -> BoxFuture<'a, Answer> {

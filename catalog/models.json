@@ -298,6 +298,31 @@
           "size": 29047086048
         }
       ]
+    },
+    {
+      "id": "qwen3-embedding-0.6b",
+      "name": "Qwen3 Embedding 0.6B",
+      "repo": "Qwen/Qwen3-Embedding-0.6B-GGUF",
+      "license": "apache-2.0",
+      "params_b": 0.6,
+      "active_params_b": 0.6,
+      "quality": 50,
+      "kv_kb_per_token": 112,
+      "context_max": 8192,
+      "roles": [
+        "embedding"
+      ],
+      "pooling": "last",
+      "dims": 1024,
+      "query_prefix": "Instruct: Given a search query, retrieve relevant passages that answer the query\nQuery: ",
+      "description": "Modèle d'embeddings multilingue (français compris) pour la recherche dans vos documents et la mémoire.",
+      "quants": [
+        {
+          "name": "Q8_0",
+          "file": "Qwen3-Embedding-0.6B-Q8_0.gguf",
+          "size": 639150592
+        }
+      ]
     }
   ]
 }

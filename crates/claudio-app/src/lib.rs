@@ -6,6 +6,7 @@ mod access;
 mod cloud;
 mod conversation;
 mod hub;
+mod knowledge;
 pub mod router;
 mod schedule;
 mod tasks;
@@ -32,12 +33,14 @@ pub use claudio_agents;
 pub use claudio_core;
 pub use claudio_hw;
 pub use claudio_llm;
+pub use claudio_memory;
 pub use claudio_models;
 pub use claudio_perms;
 pub use claudio_tools;
 pub use cloud::{BudgetStatus, ProviderView, UsageReport};
 pub use conversation::{Reply, StreamEvent, ToolTrace};
 pub use hub::{RepoView, VariantView};
+pub use knowledge::KnowledgeStatus;
 pub use schedule::ScheduleView;
 pub use tasks::{AppEvent, EventSink, TaskDetail};
 
@@ -66,6 +69,13 @@ pub struct Claudio {
     /// Places d'exécution simultanée des agents (modèle local / distant).
     pub(crate) local_slots: Arc<tokio::sync::Semaphore>,
     pub(crate) cloud_slots: Arc<tokio::sync::Semaphore>,
+    /// Serveur d'embeddings (distinct du modèle de conversation).
+    pub(crate) embedder: LocalEngine,
+    /// Dossiers en cours d'indexation.
+    pub(crate) indexing: Mutex<std::collections::HashSet<i64>>,
+    pub(crate) watcher: Mutex<
+        Option<notify_debouncer_mini::Debouncer<notify_debouncer_mini::notify::RecommendedWatcher>>,
+    >,
 }
 
 /// Agents distants exécutés en même temps au plus.
@@ -83,6 +93,8 @@ pub struct Status {
     pub ollama_models: Option<Vec<OllamaModel>>,
     pub installed_models: Vec<InstalledModel>,
     pub has_hf_token: bool,
+    /// Modèles installés servant aux embeddings (pas à la conversation).
+    pub embedding_models: Vec<String>,
     pub onboarding_done: bool,
     pub models_dir: String,
 }
@@ -126,6 +138,9 @@ impl Claudio {
         let parallel = hw.profile().max_parallel_agents.max(1);
         Ok(Arc::new(Self {
             agents: RwLock::new(agents),
+            embedder: LocalEngine::default(),
+            indexing: Mutex::default(),
+            watcher: Mutex::default(),
             running_tasks: Mutex::default(),
             events: RwLock::default(),
             local_slots: Arc::new(tokio::sync::Semaphore::new(parallel)),
@@ -205,6 +220,17 @@ impl Claudio {
             ollama_models,
             installed_models: self.registry().list()?,
             has_hf_token: self.hf_token().is_some(),
+            embedding_models: self
+                .registry()
+                .list()?
+                .into_iter()
+                .filter(|m| {
+                    self.catalog
+                        .get(&m.model_id)
+                        .is_some_and(|c| c.is_embedding())
+                })
+                .map(|m| m.key)
+                .collect(),
             onboarding_done: cfg.onboarding_done,
             models_dir: cfg.models_dir(&self.paths).display().to_string(),
         })
@@ -408,12 +434,14 @@ impl Claudio {
             use_gpu: rt.backend.uses_gpu() && profile.gpu_index.is_some(),
             threads: profile.threads,
             parallel,
+            embedding_pooling: None,
         })
     }
 
     /// Arrête proprement les moteurs (appelé à la fermeture).
     pub async fn shutdown(&self) {
         self.engine.unload().await;
+        self.embedder.unload().await;
     }
 }
 

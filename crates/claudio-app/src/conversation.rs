@@ -3,7 +3,7 @@
 //! tâches de fond (voir `tasks`).
 
 use std::collections::HashMap;
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result, bail};
@@ -315,12 +315,13 @@ impl Claudio {
             .specs()
             .await
             .into_iter()
-            .filter(|s| allow(&s.name))
             .map(|s| ToolDef {
                 name: s.name,
                 description: s.description,
                 parameters: s.parameters,
             })
+            .chain(self.app_tool_defs())
+            .filter(|t| allow(&t.name))
             .collect()
     }
 
@@ -361,7 +362,7 @@ impl Claudio {
     /// Ajoute le message de l'utilisateur, fait répondre le modèle choisi par le
     /// routeur (avec ses outils) et enregistre la réponse et sa consommation.
     pub async fn send_message(
-        &self,
+        self: &Arc<Self>,
         session_id: &str,
         text: &str,
         on_event: impl FnMut(StreamEvent) + Send,
@@ -382,9 +383,10 @@ impl Claudio {
 
         let cfg = self.config();
         let tools = self.tool_defs(|_| true).await;
+        let extra = self.knowledge_context(text, !tools.is_empty()).await;
         let mut messages = vec![ChatMessage::text(
             "system",
-            self.system_prompt(&cfg.system_prompt, session_id, !tools.is_empty()),
+            self.system_prompt(&cfg.system_prompt, session_id, !tools.is_empty()) + &extra,
         )];
         messages.extend(
             self.db
@@ -481,6 +483,13 @@ impl Claudio {
                 cost_usd: run.provider.as_ref().and(cost_usd),
             },
         )?;
+        if !run.cancelled && !run.refused {
+            self.spawn_memory_extraction(
+                session_id.to_owned(),
+                text.to_owned(),
+                run.content.clone(),
+            );
+        }
         Ok(Reply {
             message,
             tokens_per_sec: run.tokens_per_sec,
@@ -677,6 +686,9 @@ impl Claudio {
                         "l'outil {} n'est pas disponible ici",
                         call.name
                     ))
+                } else if crate::knowledge::APP_TOOLS.contains(&call.name.as_str()) {
+                    self.call_app_tool(lc.scope, &call.name, &call.arguments)
+                        .await
                 } else {
                     self.toolbox.call(&ctx, &call.name, &call.arguments).await
                 };

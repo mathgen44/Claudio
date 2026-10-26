@@ -31,7 +31,7 @@ pub fn specs() -> Vec<ToolSpec> {
         ),
         spec(
             "read_file",
-            "Lit un fichier texte. Pour les gros fichiers, lire par tranches avec offset et limit (en lignes).",
+            "Lit un fichier : texte, PDF, Word, Excel, PowerPoint, OpenDocument. Pour les gros fichiers, lire par tranches avec offset et limit (en lignes).",
             json!({"type": "object", "properties": {
                 "path": {"type": "string", "description": "Chemin complet du fichier"},
                 "offset": {"type": "integer", "description": "Première ligne à lire (0 par défaut)"},
@@ -231,7 +231,12 @@ async fn read(ctx: &Context<'_>, args: &Value) -> Result<Done> {
         .map(|l| l.clamp(1, 2000) as usize)
         .unwrap_or(DEFAULT_LINES);
     let p = path.clone();
-    let text = tokio::task::spawn_blocking(move || read_text(&p)).await??;
+    // PDF et documents bureautiques : texte extrait ; sinon lecture directe.
+    let text = tokio::task::spawn_blocking(move || match claudio_docs::kind_of(&p) {
+        Some(kind) if kind != "texte" => claudio_docs::extract(&p).map(|d| d.text()),
+        _ => read_text(&p),
+    })
+    .await??;
     let lines: Vec<&str> = text.lines().collect();
     let end = (offset + limit).min(lines.len());
     let mut body = lines.get(offset..end).unwrap_or(&[]).join("\n");

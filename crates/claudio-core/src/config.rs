@@ -35,6 +35,29 @@ pub struct Config {
     pub mcp_servers: Vec<McpServerConfig>,
     /// Laisser l'assistant utiliser des outils (fichiers, web, commandes, MCP).
     pub tools_enabled: bool,
+    pub memory: MemorySettings,
+}
+
+/// Mémoire à long terme et apprentissage.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct MemorySettings {
+    /// Retenir automatiquement les faits durables des conversations (modèle local uniquement).
+    pub auto_extract: bool,
+    /// Rappeler les souvenirs utiles au début de chaque réponse.
+    pub recall: bool,
+    /// Proposer des compétences réutilisables après une tâche réussie.
+    pub learn_skills: bool,
+}
+
+impl Default for MemorySettings {
+    fn default() -> Self {
+        Self {
+            auto_extract: true,
+            recall: true,
+            learn_skills: true,
+        }
+    }
 }
 
 /// Que faire quand un outil demande une ressource non encore autorisée.
@@ -211,6 +234,7 @@ impl Default for Config {
             permissions: Permissions::default(),
             mcp_servers: Vec::new(),
             tools_enabled: true,
+            memory: MemorySettings::default(),
         }
     }
 }

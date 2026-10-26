@@ -116,6 +116,85 @@ const MIGRATIONS: &[&str] = &[
     );
     CREATE INDEX tasks_created ON tasks(created_at);
 "#,
+    r#"
+    CREATE TABLE index_sources (
+        id          INTEGER PRIMARY KEY AUTOINCREMENT,
+        path        TEXT NOT NULL UNIQUE,
+        enabled     INTEGER NOT NULL DEFAULT 1,
+        status      TEXT NOT NULL DEFAULT 'idle',
+        error       TEXT,
+        last_scan   TEXT,
+        created_at  TEXT NOT NULL
+    );
+    CREATE TABLE index_files (
+        id          INTEGER PRIMARY KEY AUTOINCREMENT,
+        source_id   INTEGER NOT NULL REFERENCES index_sources(id) ON DELETE CASCADE,
+        path        TEXT NOT NULL UNIQUE,
+        mtime       INTEGER NOT NULL,
+        size        INTEGER NOT NULL,
+        kind        TEXT,
+        chunks      INTEGER NOT NULL DEFAULT 0,
+        error       TEXT,
+        indexed_at  TEXT
+    );
+    CREATE INDEX index_files_source ON index_files(source_id);
+    CREATE TABLE chunks (
+        id          INTEGER PRIMARY KEY AUTOINCREMENT,
+        file_id     INTEGER NOT NULL REFERENCES index_files(id) ON DELETE CASCADE,
+        ord         INTEGER NOT NULL,
+        location    TEXT,
+        text        TEXT NOT NULL,
+        embedded    INTEGER NOT NULL DEFAULT 0
+    );
+    CREATE INDEX chunks_file ON chunks(file_id);
+    CREATE INDEX chunks_pending ON chunks(embedded);
+    CREATE VIRTUAL TABLE chunks_fts USING fts5(
+        text, content='chunks', content_rowid='id', tokenize='unicode61 remove_diacritics 2'
+    );
+    CREATE TRIGGER chunks_ai AFTER INSERT ON chunks BEGIN
+        INSERT INTO chunks_fts(rowid, text) VALUES (new.id, new.text);
+    END;
+    CREATE TRIGGER chunks_ad AFTER DELETE ON chunks BEGIN
+        INSERT INTO chunks_fts(chunks_fts, rowid, text) VALUES ('delete', old.id, old.text);
+    END;
+    CREATE TABLE memories (
+        id          INTEGER PRIMARY KEY AUTOINCREMENT,
+        content     TEXT NOT NULL,
+        category    TEXT NOT NULL,
+        source      TEXT NOT NULL,
+        session_id  TEXT,
+        pinned      INTEGER NOT NULL DEFAULT 0,
+        embedded    INTEGER NOT NULL DEFAULT 0,
+        created_at  TEXT NOT NULL,
+        updated_at  TEXT NOT NULL
+    );
+    CREATE VIRTUAL TABLE memories_fts USING fts5(
+        content, content='memories', content_rowid='id', tokenize='unicode61 remove_diacritics 2'
+    );
+    CREATE TRIGGER memories_ai AFTER INSERT ON memories BEGIN
+        INSERT INTO memories_fts(rowid, content) VALUES (new.id, new.content);
+    END;
+    CREATE TRIGGER memories_ad AFTER DELETE ON memories BEGIN
+        INSERT INTO memories_fts(memories_fts, rowid, content) VALUES ('delete', old.id, old.content);
+    END;
+    CREATE TRIGGER memories_au AFTER UPDATE OF content ON memories BEGIN
+        INSERT INTO memories_fts(memories_fts, rowid, content) VALUES ('delete', old.id, old.content);
+        INSERT INTO memories_fts(rowid, content) VALUES (new.id, new.content);
+    END;
+    CREATE TABLE skill_proposals (
+        id          INTEGER PRIMARY KEY AUTOINCREMENT,
+        name        TEXT NOT NULL,
+        description TEXT NOT NULL,
+        body        TEXT NOT NULL,
+        origin      TEXT NOT NULL,
+        status      TEXT NOT NULL DEFAULT 'pending',
+        created_at  TEXT NOT NULL
+    );
+    CREATE TABLE kv (
+        key   TEXT PRIMARY KEY,
+        value TEXT NOT NULL
+    );
+"#,
 ];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -191,6 +270,47 @@ pub struct Database {
     conn: Arc<Mutex<Connection>>,
 }
 
+/// Charge sqlite-vec (recherche vectorielle) dans toutes les connexions ouvertes ensuite.
+fn register_extensions() {
+    static ONCE: std::sync::Once = std::sync::Once::new();
+    ONCE.call_once(|| {
+        // SAFETY : sqlite3_vec_init a la signature d'un point d'entrée d'extension
+        // SQLite ; l'enregistrement se fait une seule fois, avant toute connexion.
+        unsafe {
+            rusqlite::ffi::sqlite3_auto_extension(Some(std::mem::transmute::<
+                *const (),
+                unsafe extern "C" fn(
+                    *mut rusqlite::ffi::sqlite3,
+                    *mut *mut std::os::raw::c_char,
+                    *const rusqlite::ffi::sqlite3_api_routines,
+                ) -> std::os::raw::c_int,
+            >(
+                sqlite_vec::sqlite3_vec_init as *const (),
+            )));
+        }
+    });
+}
+
+impl Database {
+    pub fn kv_get(&self, key: &str) -> Result<Option<String>> {
+        self.with(|c| {
+            c.query_row("SELECT value FROM kv WHERE key = ?1", [key], |r| r.get(0))
+                .optional()
+        })
+    }
+
+    pub fn kv_set(&self, key: &str, value: &str) -> Result<()> {
+        self.with(|c| {
+            c.execute(
+                "INSERT INTO kv (key, value) VALUES (?1, ?2)
+                 ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+                params![key, value],
+            )
+        })?;
+        Ok(())
+    }
+}
+
 const SESSION_COLUMNS: &str = "id, title, route, created_at, updated_at";
 
 fn session_from_row(r: &Row<'_>) -> rusqlite::Result<Session> {
@@ -205,12 +325,14 @@ fn session_from_row(r: &Row<'_>) -> rusqlite::Result<Session> {
 
 impl Database {
     pub fn open(path: &Path) -> Result<Self> {
+        register_extensions();
         let conn =
             Connection::open(path).with_context(|| format!("ouverture de {}", path.display()))?;
         Self::init(conn)
     }
 
     pub fn open_in_memory() -> Result<Self> {
+        register_extensions();
         Self::init(Connection::open_in_memory()?)
     }
 
@@ -229,7 +351,8 @@ impl Database {
         })
     }
 
-    pub(crate) fn with<T>(&self, f: impl FnOnce(&Connection) -> rusqlite::Result<T>) -> Result<T> {
+    /// Accès direct à la connexion (requêtes propres aux autres modules).
+    pub fn with<T>(&self, f: impl FnOnce(&Connection) -> rusqlite::Result<T>) -> Result<T> {
         let conn = self.conn.lock().expect("verrou de la base empoisonné");
         Ok(f(&conn)?)
     }

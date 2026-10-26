@@ -41,6 +41,7 @@ impl AppPaths {
             &self.runtimes_dir(),
             &self.workspace_dir(),
             &self.agents_dir(),
+            &self.skills_dir(),
         ] {
             std::fs::create_dir_all(dir)
                 .with_context(|| format!("création de {}", dir.display()))?;
@@ -71,6 +72,11 @@ impl AppPaths {
     /// Définitions d'agents personnalisés (YAML).
     pub fn agents_dir(&self) -> PathBuf {
         self.config_dir.join("agents")
+    }
+
+    /// Compétences validées (fichiers Markdown).
+    pub fn skills_dir(&self) -> PathBuf {
+        self.config_dir.join("skills")
     }
 
     /// Espace de travail des outils : toujours accessible, inscriptible par le bac à sable.
