@@ -9,7 +9,30 @@ pub mod whisper;
 pub use components::{Component, Kind};
 pub use whisper::Whisper;
 
+use std::path::{self, Path, PathBuf};
+
 use anyhow::{Result, bail};
+
+/// Chemin de `target` vu depuis le dossier `base`. Les moteurs (Piper,
+/// whisper.cpp) lisent mal les chemins Windows non ASCII (dossier utilisateur
+/// accentué) : lancés depuis leur dossier, ils reçoivent un chemin relatif.
+pub fn relative_to(base: &Path, target: &Path) -> PathBuf {
+    let b: Vec<path::Component> = base.components().collect();
+    let t: Vec<path::Component> = target.components().collect();
+    let common = b.iter().zip(&t).take_while(|(x, y)| x == y).count();
+    // Pas de racine commune (autre lecteur) : chemin complet.
+    if common == 0 {
+        return target.to_path_buf();
+    }
+    let mut out = PathBuf::new();
+    for _ in common..b.len() {
+        out.push("..");
+    }
+    for c in &t[common..] {
+        out.push(c.as_os_str());
+    }
+    out
+}
 
 /// Durée en secondes d'un WAV PCM 16 bits, après vérification de son format.
 pub fn wav_duration(wav: &[u8]) -> Result<f32> {
@@ -47,6 +70,19 @@ mod tests {
         v.extend((samples * 2).to_le_bytes());
         v.resize(v.len() + samples as usize * 2, 0);
         v
+    }
+
+    #[test]
+    fn relative_paths_avoid_accents() {
+        let base = Path::new(r"C:\Users\Hervé\voice\piper-runtime\piper");
+        assert_eq!(
+            relative_to(base, Path::new(r"C:\Users\Hervé\voice\piper-tom\v.onnx")),
+            PathBuf::from(r"..\..\piper-tom\v.onnx")
+        );
+        assert_eq!(
+            relative_to(base, Path::new(r"D:\x.wav")),
+            PathBuf::from(r"D:\x.wav")
+        );
     }
 
     #[test]

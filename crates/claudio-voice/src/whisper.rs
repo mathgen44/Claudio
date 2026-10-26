@@ -120,13 +120,14 @@ async fn start(http: &reqwest::Client, exe: &Path, model: &Path, threads: usize)
         );
     }
     let port = free_port()?;
+    let dir = exe.parent().unwrap_or(exe);
     let mut cmd = Command::new(exe);
     cmd.arg("--model")
-        .arg(model)
+        .arg(crate::relative_to(dir, model))
         .args(["--host", "127.0.0.1", "--port", &port.to_string()])
         .args(["--threads", &threads.clamp(1, 8).to_string()])
         .arg("--no-timestamps")
-        .current_dir(exe.parent().unwrap_or(exe))
+        .current_dir(dir)
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null())

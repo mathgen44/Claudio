@@ -70,9 +70,14 @@ async fn feed(mut child: tokio::process::Child, text: &str, limit: Duration) -> 
         .await
         .context("synthèse vocale : délai dépassé")??;
     if !out.status.success() {
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        let detail = stderr.lines().rev().find(|l| !l.trim().is_empty());
         bail!(
-            "synthèse vocale en échec : {}",
-            String::from_utf8_lossy(&out.stderr).trim()
+            "synthèse vocale en échec ({}){}",
+            out.status,
+            detail
+                .map(|d| format!(" : {}", d.trim()))
+                .unwrap_or_default()
         );
     }
     Ok(())
@@ -105,13 +110,15 @@ pub async fn speak_piper(
 ) -> Result<()> {
     // Piper règle la durée des sons : plus grand = plus lent.
     let length_scale = 1.0 - rate.clamp(-10, 10) as f32 * 0.04;
+    let dir = exe.parent().unwrap_or(exe);
     let mut cmd = Command::new(exe);
     cmd.arg("--model")
-        .arg(voice)
+        .arg(crate::relative_to(dir, voice))
         .arg("--output_file")
-        .arg(out)
+        .arg(crate::relative_to(dir, out))
+        .args(["--espeak_data", "espeak-ng-data"])
         .args(["--length_scale", &format!("{length_scale:.2}")])
-        .current_dir(exe.parent().unwrap_or(exe))
+        .current_dir(dir)
         .stdin(Stdio::piped())
         .stdout(Stdio::null())
         .stderr(Stdio::piped())

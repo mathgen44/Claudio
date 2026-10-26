@@ -195,7 +195,15 @@ impl Claudio {
         let res = match (cfg.tts_engine, voice) {
             (TtsEngine::Piper, Some(v)) if piper.is_installed(&root) && v.is_installed(&root) => {
                 let exe = components::find_exe(&piper.dir(&root), "piper.exe")?;
-                tts::speak_piper(&exe, &v.main_file(&root), &speech, cfg.rate, &out).await
+                match tts::speak_piper(&exe, &v.main_file(&root), &speech, cfg.rate, &out).await {
+                    Ok(()) => Ok(()),
+                    // Mieux vaut la voix Windows que le silence.
+                    Err(e) => {
+                        tracing::warn!("Piper : {e:#} ; voix Windows utilisée");
+                        let sapi = cfg.system_voice.as_deref();
+                        tts::speak_sapi(&speech, sapi, &cfg.language, cfg.rate, &out).await
+                    }
+                }
             }
             (engine, _) => {
                 if engine == TtsEngine::Piper {
