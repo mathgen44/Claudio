@@ -259,3 +259,30 @@ Chaque phase se termine par une version **utilisable** et testée.
 | Code source | git local + **dépôt GitHub privé** |
 
 Restent ouverts (à trancher plus tard) : licence du projet, canaux distants, voix.
+
+---
+
+## 9. Avancement
+
+### Phases 0 et 1 — livrées (2026-10-26)
+
+- Workspace Cargo (`claudio-core`, `-hw`, `-models`, `-llm`, `-app`) + application Tauri 2, CI GitHub Actions.
+- Journaux quotidiens, configuration TOML, secrets dans le Gestionnaire d'identifiants Windows, SQLite avec migrations.
+- Profileur matériel (DXGI + NVML) et profils S/M/L/XL ; catalogue de 8 modèles GGUF avec sélection par mémoire.
+- Téléchargements Hugging Face avec reprise et vérification SHA-256 ; installation de llama.cpp officiel (CUDA/Vulkan/CPU, empreintes vérifiées).
+- llama-server piloté par Claudio (job Windows : arrêt garanti avec l'application, `--fit` pour répartir GPU/CPU), Ollama en option.
+- Interface : Mise en route, Conversations (flux continu, réflexion repliable), Modèles, Paramètres.
+
+Mesuré sur la machine de développement (RTX 5070 Ti) : ~440 jetons/s avec Qwen 3.5 0.8B.
+
+### Ajustements par rapport au plan initial
+
+- Les tailles de cache KV du catalogue sont des estimations prudentes ; llama.cpp ajuste lui-même le placement (`--fit`), ce qui rend aussi utilisables les gros modèles MoE en mode hybride GPU+RAM.
+- La réflexion est coupée par défaut sur les modèles de moins de 9 milliards de paramètres (ils tournent en rond).
+
+### Reporté à la phase 2
+
+- Recherche libre sur Hugging Face dans l'interface (l'API est prête : `hf::search`).
+- Placement « hybride » explicite des modèles MoE dans le classement.
+- Icône de zone de notification, instance unique, raccourci global.
+- Conservation du raisonnement dans l'historique.
