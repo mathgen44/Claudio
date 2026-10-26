@@ -280,9 +280,17 @@ Mesuré sur la machine de développement (RTX 5070 Ti) : ~440 jetons/s avec Qwen
 - Les tailles de cache KV du catalogue sont des estimations prudentes ; llama.cpp ajuste lui-même le placement (`--fit`), ce qui rend aussi utilisables les gros modèles MoE en mode hybride GPU+RAM.
 - La réflexion est coupée par défaut sur les modèles de moins de 9 milliards de paramètres (ils tournent en rond).
 
-### Reporté à la phase 2
+### Phase 2 — livrée (2026-10-26)
 
-- Recherche libre sur Hugging Face dans l'interface (l'API est prête : `hf::search`).
-- Placement « hybride » explicite des modèles MoE dans le classement.
-- Icône de zone de notification, instance unique, raccourci global.
-- Conservation du raisonnement dans l'historique.
+- Hub Hugging Face dans l'interface : recherche, ouverture d'un dépôt par son nom, variantes GGUF (fichiers découpés réunis), estimation de la mémoire et du placement à partir des métadonnées GGUF, licence à accepter avant téléchargement si elle n'est pas libre, dépôts restreints signalés.
+- Placement « hybride » GPU + RAM pour les mélanges d'experts (catalogue et dépôts quelconques).
+- Fournisseurs distants : Anthropic natif (`anthropic-version: 2026-10-21`, réflexion adaptative résumée, repli serveur en cas de refus), OpenAI, Mistral, Gemini, OpenRouter (prix récupérés), API compatibles OpenAI (adresse https obligatoire sauf localhost). Clés dans le Gestionnaire d'identifiants.
+- Routeur pur et testé : modes local / automatique / cloud, réglage par conversation, escalade vers le cloud quand la conversation dépasse le contexte local, repli quand la cible échoue avant d'avoir répondu, historique raccourci pour le modèle local.
+- Comptabilité : table `usage`, coût par message, consommation du mois par modèle, dépense sur 30 jours, plafonds journalier et mensuel (blocage à 100 %, alerte à 80 %).
+- Le raisonnement et la décision du routeur sont conservés dans l'historique.
+
+### Reporté
+
+- Gestion de plusieurs modèles locaux chargés en même temps (LRU sur la mémoire vidéo) : utile surtout avec les agents parallèles, prévue avec la phase 4.
+- Téléchargements segmentés en parallèle.
+- Icône de zone de notification, raccourci global.

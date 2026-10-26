@@ -555,6 +555,7 @@ name = "claudio-app"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "chrono",
  "claudio-core",
  "claudio-hw",
  "claudio-llm",
@@ -619,6 +620,7 @@ name = "claudio-llm"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "claudio-core",
  "claudio-hw",
  "claudio-models",
  "futures-util",

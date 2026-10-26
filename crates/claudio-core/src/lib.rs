@@ -5,6 +5,7 @@ pub mod db;
 pub mod logging;
 pub mod paths;
 pub mod secrets;
+pub mod usage;
 
 pub use config::Config;
 pub use db::{Database, Message, MessageMeta, Role, Session};

@@ -3,8 +3,11 @@
 
 import type {
   ActiveModel,
-  ChatEvent,
   Config,
+  HfRepo,
+  ProviderView,
+  StreamEvent,
+  UsageRow,
   InstallEvent,
   InstalledModel,
   Message,
@@ -26,6 +29,40 @@ const config: Config = {
   thinking: null,
   system_prompt: "Tu es Claudio, un assistant personnel qui fonctionne sur l'ordinateur de l'utilisateur.",
   onboarding_done: new URLSearchParams(location.search).has("ready"),
+  providers: [],
+  routing: { mode: "auto", cloud: null },
+  budget: { daily_usd: 2, monthly_usd: 20 },
+};
+
+const providers: ProviderView[] = [];
+const usage: UsageRow[] = [
+  { provider: "local", model: "gemma-4-12b:Q6_K", local: true, requests: 42, input_tokens: 51200, output_tokens: 18300, cost_usd: 0, unpriced: 0 },
+];
+let spentToday = 0;
+
+const hfRepo: HfRepo = {
+  id: "unsloth/Qwen3.6-35B-A3B-GGUF",
+  url: "https://huggingface.co/unsloth/Qwen3.6-35B-A3B-GGUF",
+  license: "apache-2.0",
+  license_needs_review: false,
+  gated: false,
+  downloads: 1292945,
+  likes: 812,
+  variants: (
+    [
+      ["UD-Q3_K_M", 16.6, "hybrid"],
+      ["UD-IQ4_XS", 17.7, "hybrid"],
+      ["UD-Q4_K_M", 22.1, "hybrid"],
+      ["Q8_0", 36.9, "hybrid"],
+      ["BF16", 69.4, "toobig"],
+    ] as const
+  ).map(([quant, gb, placement]) => ({
+    quant,
+    files: [{ path: `Qwen3.6-35B-A3B-${quant}.gguf`, size: gb * 1e9, sha256: null }],
+    size: gb * 1e9,
+    fit: { params_b: 34.7, memory_needed: gb * 1e9 + 1.2e9, placement },
+    installed: false,
+  })),
 };
 
 const recos: Recommendation[] = [
@@ -177,7 +214,7 @@ export async function mockInvoke<T>(cmd: string, args: Record<string, any> = {})
       return r([...sessions].sort((a, b) => b.updated_at.localeCompare(a.updated_at)));
     case "create_session": {
       const now = new Date().toISOString();
-      const s = { id: crypto.randomUUID(), title: "Nouvelle conversation", created_at: now, updated_at: now };
+      const s: Session = { id: crypto.randomUUID(), title: "Nouvelle conversation", route: null, created_at: now, updated_at: now };
       sessions.push(s);
       return r(s);
     }
@@ -190,10 +227,15 @@ export async function mockInvoke<T>(cmd: string, args: Record<string, any> = {})
     case "list_messages":
       return r(messages.filter((m) => m.session_id === args.sessionId));
     case "send_message": {
-      const on = args.onEvent as (e: ChatEvent) => void;
+      const on = args.onEvent as (e: StreamEvent) => void;
       const s = sessions.find((x) => x.id === args.sessionId)!;
       const now = () => new Date().toISOString();
-      messages.push({ id: nextId++, session_id: s.id, role: "user", content: args.text, model: null, tokens: null, duration_ms: null, created_at: now() });
+      messages.push({ id: nextId++, session_id: s.id, role: "user", content: args.text, model: null, tokens: null, duration_ms: null, reasoning: null, route: null, cost_usd: null, created_at: now() });
+      const mode = s.route ?? config.routing.mode;
+      const cloud = mode === "cloud" && config.routing.cloud;
+      const route = cloud ? "mode cloud" : "modèle local";
+      const model = cloud ? config.routing.cloud!.model : "gemma-4-12b:Q6_K";
+      on({ type: "route", target: cloud ? "cloud" : "local", model, reason: route });
       if (s.title === "Nouvelle conversation") s.title = String(args.text).slice(0, 48);
       const answer =
         "Bonjour ! Je suis **Claudio**, ton assistant local.\n\nJe tourne entièrement sur ta machine :\n\n- modèle chargé sur la carte graphique\n- aucune donnée envoyée sur Internet\n\n```powershell\nGet-Process llama-server\n```";
@@ -205,10 +247,117 @@ export async function mockInvoke<T>(cmd: string, args: Record<string, any> = {})
         on({ type: "token", text: w });
         await sleep(25);
       }
-      const msg: Message = { id: nextId++, session_id: s.id, role: "assistant", content: answer, model: "gemma-4-12b:Q6_K", tokens: 64, duration_ms: 900, created_at: now() };
+      const cost = cloud ? 0.0123 : null;
+      if (cost) spentToday += cost;
+      const msg: Message = {
+        id: nextId++,
+        session_id: s.id,
+        role: "assistant",
+        content: answer,
+        model: cloud ? `${model} · Anthropic` : model,
+        tokens: 64,
+        duration_ms: 900,
+        reasoning: "L'utilisateur me salue, je me présente.",
+        route,
+        cost_usd: cost,
+        created_at: now(),
+      };
       messages.push(msg);
       s.updated_at = now();
-      return r({ message: msg, reasoning: "", tokens_per_sec: 88.4, cancelled: false });
+      return r({ message: msg, tokens_per_sec: 88.4, cancelled: false });
+    }
+    case "set_session_route":
+      sessions.find((s) => s.id === args.sessionId)!.route = args.mode;
+      return r(undefined);
+    case "hf_search":
+      return r(
+        ["unsloth/Qwen3.6-35B-A3B-GGUF", "unsloth/gemma-4-12b-it-GGUF", "bartowski/Mistral-Small-3.3-24B-GGUF"].map((id, i) => ({
+          id,
+          downloads: 1_300_000 / (i + 1),
+          likes: 800 / (i + 1),
+          license: i === 2 ? "mrl" : "apache-2.0",
+          pipeline_tag: "text-generation",
+          updated: null,
+        })),
+      );
+    case "hf_repo":
+      return r({ ...hfRepo, id: args.repo, license_needs_review: args.repo.includes("Mistral"), license: args.repo.includes("Mistral") ? "mrl" : "apache-2.0" });
+    case "install_hf": {
+      const v = hfRepo.variants.find((x) => x.quant === args.quant)!;
+      await fakeDownload(v.size, `${args.repo}:${args.quant}`, args.onProgress);
+      v.installed = true;
+      return r({ key: `${args.repo}:${args.quant}`, model_id: args.repo, name: "Qwen3.6-35B-A3B", quant: args.quant, repo: args.repo, file: "…", size: v.size, sha256: null, installed_at: new Date().toISOString() });
+    }
+    case "list_providers":
+      return r(providers);
+    case "add_provider": {
+      const p: ProviderView = {
+        id: `${args.kind}-${providers.length + 1}`,
+        kind: args.kind,
+        name: args.name || "Anthropic",
+        base_url: args.baseUrl,
+        enabled: true,
+        prices: [],
+        has_key: !!args.apiKey,
+        kind_label: "Anthropic (Claude)",
+        default_base_url: "https://api.anthropic.com",
+      };
+      providers.push(p);
+      return r(p);
+    }
+    case "update_provider": {
+      const p = providers.find((x) => x.id === args.id)!;
+      if (args.enabled != null) p.enabled = args.enabled;
+      return r(undefined);
+    }
+    case "set_provider_key":
+      providers.find((x) => x.id === args.id)!.has_key = !!args.key;
+      return r(undefined);
+    case "remove_provider":
+      providers.splice(providers.findIndex((x) => x.id === args.id), 1);
+      if (config.routing.cloud?.provider_id === args.id) config.routing.cloud = null;
+      return r(undefined);
+    case "provider_models":
+      await sleep(300);
+      return r([
+        { id: "claude-opus-5-5", name: "Claude Opus 5.5", input_per_m: 4, output_per_m: 20 },
+        { id: "claude-sonnet-5-5", name: "Claude Sonnet 5.5", input_per_m: 2, output_per_m: 10 },
+        { id: "claude-haiku-5-5", name: "Claude Haiku 5.5", input_per_m: 0.1, output_per_m: 0.5 },
+      ]);
+    case "set_model_price":
+      return r(undefined);
+    case "set_cloud_model":
+      config.routing.cloud = args.model;
+      return r(undefined);
+    case "set_routing_mode":
+      config.routing.mode = args.mode;
+      return r(undefined);
+    case "set_budget":
+      config.budget = args.budget;
+      return r(undefined);
+    case "budget_status":
+    case "usage_report": {
+      const budget = {
+        today_usd: spentToday + 0.42,
+        month_usd: spentToday + 6.8,
+        daily_usd: config.budget.daily_usd,
+        monthly_usd: config.budget.monthly_usd,
+        exceeded: false,
+        warning: false,
+      };
+      if (cmd === "budget_status") return r(budget);
+      const month = [
+        ...usage,
+        { provider: "anthropic-1", model: "claude-opus-5-5", local: false, requests: 12, input_tokens: 240000, output_tokens: 61000, cost_usd: 2.18, unpriced: 0 },
+        { provider: "openrouter-1", model: "mystery-model", local: false, requests: 3, input_tokens: 9000, output_tokens: 2000, cost_usd: 0, unpriced: 3 },
+      ];
+      const daily = Array.from({ length: 30 }, (_, i) => ({
+        day: new Date(Date.now() - (29 - i) * 864e5).toISOString().slice(0, 10),
+        cost_usd: i % 4 === 0 ? 0 : Math.abs(Math.sin(i)) * 0.6,
+        local_requests: 5,
+        cloud_requests: i % 4 === 0 ? 0 : 2,
+      }));
+      return r({ budget, month, daily });
     }
     default:
       throw `commande simulée inconnue : ${cmd}`;

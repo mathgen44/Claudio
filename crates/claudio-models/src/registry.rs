@@ -15,10 +15,18 @@ pub struct InstalledModel {
     pub name: String,
     pub quant: String,
     pub repo: String,
-    /// Chemin relatif au dossier des modèles.
+    /// Chemin relatif au dossier des modèles (premier fichier si le modèle est découpé).
     pub file: PathBuf,
+    /// Fichiers suivants d'un modèle découpé.
+    #[serde(default)]
+    pub parts: Vec<PathBuf>,
     pub size: u64,
     pub sha256: Option<String>,
+    /// Nombre de paramètres (milliards), connu ou estimé.
+    #[serde(default)]
+    pub params_b: Option<f64>,
+    #[serde(default)]
+    pub context_max: Option<u32>,
     pub installed_at: DateTime<Utc>,
 }
 
@@ -94,10 +102,12 @@ impl Registry {
     pub fn remove(&self, key: &str) -> Result<()> {
         let mut m = self.load()?;
         if let Some(found) = m.models.iter().find(|x| x.key == key) {
-            let path = self.path_of(found);
-            if path.exists() {
-                std::fs::remove_file(&path)
-                    .with_context(|| format!("suppression de {}", path.display()))?;
+            for rel in std::iter::once(&found.file).chain(&found.parts) {
+                let path = self.root.join(rel);
+                if path.exists() {
+                    std::fs::remove_file(&path)
+                        .with_context(|| format!("suppression de {}", path.display()))?;
+                }
             }
         }
         m.models.retain(|x| x.key != key);
@@ -123,8 +133,11 @@ mod tests {
             quant: "Q4".into(),
             repo: "r/m".into(),
             file: PathBuf::from("m").join("m-Q4.gguf"),
+            parts: vec![],
             size: 4,
             sha256: None,
+            params_b: None,
+            context_max: None,
             installed_at: Utc::now(),
         })
         .unwrap();

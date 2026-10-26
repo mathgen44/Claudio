@@ -1,17 +1,20 @@
 // Conversations : liste des sessions, fil de messages en continu, saisie.
 
-import { Brain, ChevronRight, MessageSquarePlus, Pencil, Send, Square, Trash2 } from "lucide-react";
+import { Brain, ChevronRight, Cloud, Cpu, MessageSquarePlus, Pencil, Send, Square, Trash2 } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
-import { activeLabel, api, type Message, type Session } from "../api";
+import { activeLabel, api, formatUsd, routingLabels, type Config, type Message, type RoutingMode, type Session, type StreamEvent } from "../api";
 import { useStore } from "../store";
 import { Button, ErrorNote, Spinner } from "../ui";
+
+type Route = Extract<StreamEvent, { type: "route" }>;
 
 interface Pending {
   user: string;
   reasoning: string;
   content: string;
+  route?: Route;
 }
 
 export function Chat({ onOpenModels }: { onOpenModels: () => void }) {
@@ -24,7 +27,12 @@ export function Chat({ onOpenModels }: { onOpenModels: () => void }) {
   const [input, setInput] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [loadingModel, setLoadingModel] = useState(false);
+  const [config, setConfig] = useState<Config | null>(null);
   const bottom = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    api.config().then(setConfig);
+  }, []);
 
   const loadSessions = useCallback(async () => {
     const list = await api.sessions();
@@ -48,7 +56,8 @@ export function Chat({ onOpenModels }: { onOpenModels: () => void }) {
   // Précharge le modèle actif pour une première réponse rapide.
   const active = status?.active_model;
   useEffect(() => {
-    if (!active) return;
+    // En mode cloud, inutile d'occuper la carte graphique d'avance.
+    if (!active || !config || config.routing.mode === "cloud") return;
     setLoadingModel(true);
     api
       .warmUp()
@@ -57,7 +66,7 @@ export function Chat({ onOpenModels }: { onOpenModels: () => void }) {
         setLoadingModel(false);
         refresh();
       });
-  }, [JSON.stringify(active)]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [JSON.stringify(active), config?.routing.mode]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const newSession = async () => {
     const s = await api.createSession();
@@ -75,9 +84,12 @@ export function Chat({ onOpenModels }: { onOpenModels: () => void }) {
     setPending({ user: text, reasoning: "", content: "" });
     try {
       const reply = await api.sendMessage(sid, text, (e) =>
-        setPending((p) =>
-          p && (e.type === "token" ? { ...p, content: p.content + e.text } : { ...p, reasoning: p.reasoning + e.text }),
-        ),
+        setPending((p) => {
+          if (!p) return p;
+          // Un nouvel itinéraire (repli) repart de zéro.
+          if (e.type === "route") return { ...p, route: e, content: "", reasoning: "" };
+          return e.type === "token" ? { ...p, content: p.content + e.text } : { ...p, reasoning: p.reasoning + e.text };
+        }),
       );
       setLastSpeed(reply.tokens_per_sec);
     } catch (e) {
@@ -104,7 +116,13 @@ export function Chat({ onOpenModels }: { onOpenModels: () => void }) {
     if (current === s.id) setCurrent(list[0]?.id ?? null);
   };
 
-  const noModel = status && !status.active_model;
+  const noModel = status && !status.active_model && !config?.routing.cloud;
+  const session = sessions.find((s) => s.id === current);
+  const setRoute = async (mode: RoutingMode | null) => {
+    if (!current) return;
+    await api.setSessionRoute(current, mode);
+    loadSessions();
+  };
 
   return (
     <div className="flex h-full min-h-0">
@@ -146,10 +164,31 @@ export function Chat({ onOpenModels }: { onOpenModels: () => void }) {
                 loadingModel ? "animate-pulse bg-amber-500" : status?.loaded_model || active?.source === "ollama" ? "bg-[var(--ok)]" : "bg-[var(--muted)]"
               }`}
             />
-            <span className="font-medium">{activeLabel(active ?? null, status?.installed_models ?? [])}</span>
+            <span className="font-medium">
+              {(session?.route ?? config?.routing.mode) === "cloud" && config?.routing.cloud
+                ? `${config.routing.cloud.model} (cloud)`
+                : activeLabel(active ?? null, status?.installed_models ?? [])}
+            </span>
             {loadingModel && <span className="text-[var(--muted)]">chargement en mémoire…</span>}
           </button>
-          {lastSpeed != null && <span className="text-xs text-[var(--muted)]">{lastSpeed.toFixed(0)} jetons/s</span>}
+          <div className="flex items-center gap-3">
+            {lastSpeed != null && <span className="text-xs text-[var(--muted)]">{lastSpeed.toFixed(0)} jetons/s</span>}
+            {session && config && (
+              <select
+                className="rounded-lg border border-[var(--border)] bg-[var(--panel)] px-2 py-1 text-sm"
+                title="Où cette conversation est traitée"
+                value={session.route ?? ""}
+                onChange={(e) => setRoute((e.target.value || null) as RoutingMode | null)}
+              >
+                <option value="">Par défaut ({routingLabels[config.routing.mode].toLowerCase()})</option>
+                {(Object.keys(routingLabels) as RoutingMode[]).map((m) => (
+                  <option key={m} value={m}>
+                    {routingLabels[m]}
+                  </option>
+                ))}
+              </select>
+            )}
+          </div>
         </header>
 
         <div className="min-h-0 flex-1 overflow-y-auto">
@@ -169,11 +208,12 @@ export function Chat({ onOpenModels }: { onOpenModels: () => void }) {
               </div>
             )}
             {messages.map((m) => (
-              <Bubble key={m.id} role={m.role} content={m.content} meta={m} />
+              <Bubble key={m.id} role={m.role} content={m.content} reasoning={m.reasoning ?? undefined} meta={m} />
             ))}
             {pending && (
               <>
                 <Bubble role="user" content={pending.user} />
+                {pending.route && <RouteBadge route={pending.route} />}
                 <Bubble role="assistant" content={pending.content} reasoning={pending.reasoning} streaming />
               </>
             )}
@@ -247,11 +287,23 @@ function Bubble({
         streaming && !reasoning && <Spinner className="text-[var(--muted)]" />
       )}
       {meta?.duration_ms != null && (
-        <p className="text-xs text-[var(--muted)]">
+        <p className="text-xs text-[var(--muted)]" title={meta.route ?? undefined}>
           {meta.model} · {meta.tokens ?? "?"} jetons · {(meta.duration_ms / 1000).toFixed(1).replace(".", ",")} s
+          {meta.cost_usd != null && ` · ${formatUsd(meta.cost_usd)}`}
+          {meta.route && meta.route !== "modèle local" && ` · ${meta.route}`}
         </p>
       )}
     </div>
+  );
+}
+
+function RouteBadge({ route }: { route: Route }) {
+  const cloud = route.target === "cloud";
+  return (
+    <p className="flex items-center gap-1.5 text-xs text-[var(--muted)]">
+      {cloud ? <Cloud size={13} /> : <Cpu size={13} />}
+      {cloud ? "Cloud" : "Local"} · {route.model} · {route.reason}
+    </p>
   );
 }
 

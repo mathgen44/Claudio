@@ -181,6 +181,7 @@ impl LlamaServer {
 
     pub fn endpoint(&self) -> Endpoint {
         Endpoint {
+            api: crate::chat::Api::Local,
             base_url: format!("http://127.0.0.1:{}/v1", self.port),
             model: self.config.alias.clone(),
             api_key: None,

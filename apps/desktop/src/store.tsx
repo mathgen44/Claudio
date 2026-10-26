@@ -17,6 +17,7 @@ interface Store {
   refresh: () => Promise<void>;
   downloads: Record<string, DownloadState>;
   downloadModel: (modelId: string, quant: string, label: string) => Promise<boolean>;
+  downloadHf: (repo: string, quant: string) => Promise<boolean>;
   installRuntime: () => Promise<boolean>;
   cancel: (key: string) => void;
   dismiss: (key: string) => void;
@@ -65,6 +66,11 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       api.installModel(modelId, quant, (progress) => patch(modelKey(modelId, quant), { progress })),
     );
 
+  const downloadHf = (repo: string, quant: string) =>
+    run(modelKey(repo, quant), `${repo.split("/").pop()} · ${quant}`, () =>
+      api.installHf(repo, quant, (progress) => patch(modelKey(repo, quant), { progress })),
+    );
+
   const installRuntime = () =>
     run(RUNTIME_KEY, "Moteur llama.cpp", () =>
       api.installRuntime((e) =>
@@ -76,7 +82,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   const dismiss = (key: string) => setDownloads(({ [key]: _, ...rest }) => rest);
 
   return (
-    <Ctx.Provider value={{ status, statusError, refresh, downloads, downloadModel, installRuntime, cancel, dismiss }}>
+    <Ctx.Provider value={{ status, statusError, refresh, downloads, downloadModel, downloadHf, installRuntime, cancel, dismiss }}>
       {children}
     </Ctx.Provider>
   );

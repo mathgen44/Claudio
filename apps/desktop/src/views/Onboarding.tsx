@@ -2,7 +2,7 @@
 
 import { Check, Download, Sparkles } from "lucide-react";
 import { useEffect, useState } from "react";
-import { api, backendLabel, modelKey, type Recommendation } from "../api";
+import { api, backendLabel, modelKey, placementLabels, type Recommendation } from "../api";
 import { DownloadRow } from "../components/DownloadRow";
 import { MachineCard } from "../components/MachineCard";
 import { RUNTIME_KEY, useStore } from "../store";
@@ -97,7 +97,7 @@ export function Onboarding({ onDone }: { onDone: () => void }) {
                 </div>
                 <p className="mt-0.5 text-[var(--muted)]">{r.description}</p>
                 <p className="mt-1 text-xs text-[var(--muted)]">
-                  {formatBytes(r.file_size)} à télécharger · {r.placement === "gpu" ? "sur la carte graphique" : "sur le processeur"} ·
+                  {formatBytes(r.file_size)} à télécharger · {placementLabels[r.placement].toLowerCase()} ·
                   licence {r.license}
                 </p>
               </div>

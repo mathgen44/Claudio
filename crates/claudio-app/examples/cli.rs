@@ -5,16 +5,18 @@
 //! cargo run -p claudio-app --example cli -- recommend
 //! cargo run -p claudio-app --example cli -- runtime
 //! cargo run -p claudio-app --example cli -- install qwen3.5-0.8b Q4_K_M
+//! cargo run -p claudio-app --example cli -- search qwen
+//! cargo run -p claudio-app --example cli -- repo unsloth/Qwen3.5-4B-GGUF
+//! cargo run -p claudio-app --example cli -- usage
 //! cargo run -p claudio-app --example cli -- chat "Bonjour !"
 //! ```
 
 use std::io::Write;
 
 use anyhow::{Result, bail};
-use claudio_app::Claudio;
 use claudio_app::claudio_core::AppPaths;
-use claudio_app::claudio_llm::ChatEvent;
 use claudio_app::claudio_llm::runtime::InstallEvent;
+use claudio_app::{Claudio, StreamEvent};
 
 fn mb(b: u64) -> f64 {
     b as f64 / 1e6
@@ -79,13 +81,46 @@ async fn main() -> Result<()> {
                 .await?;
             println!("\ninstallé : {}", m.key);
         }
+        ["search", query] => {
+            for m in app.hf_search(query).await? {
+                println!(
+                    "{:<60} {:>9} téléchargements  {}",
+                    m.id,
+                    m.downloads,
+                    m.license.unwrap_or_default()
+                );
+            }
+        }
+        ["repo", repo] => {
+            let r = app.hf_repo(repo).await?;
+            println!(
+                "{} · licence {:?} · à relire {} · restreint {}",
+                r.id, r.license, r.license_needs_review, r.gated
+            );
+            for v in r.variants {
+                println!(
+                    "  {:<14} {:>8.0} Mo  ~{:.1} G paramètres  {:?}{}",
+                    v.variant.quant,
+                    mb(v.variant.size),
+                    v.fit.params_b,
+                    v.fit.placement,
+                    if v.installed { "  [installé]" } else { "" }
+                );
+            }
+        }
+        ["usage"] => println!("{}", serde_json::to_string_pretty(&app.usage_report()?)?),
         ["chat", text] => {
             let session = app.create_session()?;
             let reply = app
                 .send_message(&session.id, text, |ev| {
                     match ev {
-                        ChatEvent::Token { text } => print!("{text}"),
-                        ChatEvent::Reasoning { text } => print!("\x1b[2m{text}\x1b[0m"),
+                        StreamEvent::Route {
+                            target,
+                            model,
+                            reason,
+                        } => println!("[{target:?} · {model} · {reason}]"),
+                        StreamEvent::Token { text } => print!("{text}"),
+                        StreamEvent::Reasoning { text } => print!("\x1b[2m{text}\x1b[0m"),
                     }
                     std::io::stdout().flush().ok();
                 })
@@ -97,9 +132,9 @@ async fn main() -> Result<()> {
                 reply.message.duration_ms.unwrap_or(0)
             );
         }
-        _ => {
-            bail!("usage : cli status | recommend | runtime | install <id> <quant> | chat <texte>")
-        }
+        _ => bail!(
+            "usage : cli status | recommend | runtime | install <id> <quant> | search <texte> | repo <dépôt> | usage | chat <texte>"
+        ),
     }
     app.shutdown().await;
     Ok(())

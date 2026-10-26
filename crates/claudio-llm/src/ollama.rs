@@ -44,6 +44,7 @@ pub async fn list(http: &reqwest::Client, base: &str) -> Option<Vec<OllamaModel>
 
 pub fn endpoint(base: &str, model: &str) -> Endpoint {
     Endpoint {
+        api: crate::chat::Api::Local,
         base_url: format!("{base}/v1"),
         model: model.to_owned(),
         api_key: None,

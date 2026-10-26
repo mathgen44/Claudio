@@ -81,7 +81,7 @@ export interface Recommendation {
   model_name: string;
   quant: string;
   file_size: number;
-  placement: "gpu" | "cpu";
+  placement: Placement;
   context: number;
   memory_needed: number;
   score: number;
@@ -110,6 +110,106 @@ export interface Config {
   thinking: boolean | null;
   system_prompt: string;
   onboarding_done: boolean;
+  providers: ProviderConfig[];
+  routing: { mode: RoutingMode; cloud: CloudModel | null };
+  budget: Budget;
+}
+
+export type ProviderKind = "anthropic" | "openai" | "mistral" | "gemini" | "openrouter" | "custom";
+export type RoutingMode = "local" | "auto" | "cloud";
+
+export interface ModelPrice {
+  model: string;
+  input_per_m: number;
+  output_per_m: number;
+}
+
+export interface ProviderConfig {
+  id: string;
+  kind: ProviderKind;
+  name: string;
+  base_url: string | null;
+  enabled: boolean;
+  prices: ModelPrice[];
+}
+
+export interface ProviderView extends ProviderConfig {
+  has_key: boolean;
+  kind_label: string;
+  default_base_url: string | null;
+}
+
+export interface CloudModel {
+  provider_id: string;
+  model: string;
+}
+
+export interface Budget {
+  daily_usd: number | null;
+  monthly_usd: number | null;
+}
+
+export interface RemoteModel {
+  id: string;
+  name: string;
+  input_per_m: number | null;
+  output_per_m: number | null;
+}
+
+export interface BudgetStatus {
+  today_usd: number;
+  month_usd: number;
+  daily_usd: number | null;
+  monthly_usd: number | null;
+  exceeded: boolean;
+  warning: boolean;
+}
+
+export interface UsageRow {
+  provider: string;
+  model: string;
+  local: boolean;
+  requests: number;
+  input_tokens: number;
+  output_tokens: number;
+  cost_usd: number;
+  unpriced: number;
+}
+
+export interface UsageReport {
+  budget: BudgetStatus;
+  month: UsageRow[];
+  daily: { day: string; cost_usd: number; local_requests: number; cloud_requests: number }[];
+}
+
+export type Placement = "gpu" | "hybrid" | "cpu" | "toobig";
+
+export interface HfSummary {
+  id: string;
+  downloads: number;
+  likes: number;
+  license: string | null;
+  pipeline_tag: string | null;
+  updated: string | null;
+}
+
+export interface HfVariant {
+  quant: string;
+  files: { path: string; size: number; sha256: string | null }[];
+  size: number;
+  fit: { params_b: number; memory_needed: number; placement: Placement };
+  installed: boolean;
+}
+
+export interface HfRepo {
+  id: string;
+  url: string;
+  license: string | null;
+  license_needs_review: boolean;
+  gated: boolean;
+  downloads: number;
+  likes: number;
+  variants: HfVariant[];
 }
 
 export interface SettingsPatch {
@@ -124,6 +224,7 @@ export interface SettingsPatch {
 export interface Session {
   id: string;
   title: string;
+  route: RoutingMode | null;
   created_at: string;
   updated_at: string;
 }
@@ -138,14 +239,19 @@ export interface Message {
   model: string | null;
   tokens: number | null;
   duration_ms: number | null;
+  reasoning: string | null;
+  route: string | null;
+  cost_usd: number | null;
   created_at: string;
 }
 
-export type ChatEvent = { type: "token"; text: string } | { type: "reasoning"; text: string };
+export type StreamEvent =
+  | { type: "route"; target: "local" | "cloud"; model: string; reason: string }
+  | { type: "token"; text: string }
+  | { type: "reasoning"; text: string };
 
 export interface Reply {
   message: Message;
-  reasoning: string;
   tokens_per_sec: number | null;
   cancelled: boolean;
 }
@@ -185,10 +291,52 @@ export const api = {
   renameSession: (id: string, title: string) => call<void>("rename_session", { id, title }),
   deleteSession: (id: string) => call<void>("delete_session", { id }),
   messages: (sessionId: string) => call<Message[]>("list_messages", { sessionId }),
-  sendMessage: (sessionId: string, text: string, onEvent: (e: ChatEvent) => void) =>
+  sendMessage: (sessionId: string, text: string, onEvent: (e: StreamEvent) => void) =>
     call<Reply>("send_message", { sessionId, text, onEvent: channel(onEvent) }),
   cancelChat: (sessionId: string) => call<void>("cancel_chat", { sessionId }),
+  setSessionRoute: (sessionId: string, mode: RoutingMode | null) =>
+    call<void>("set_session_route", { sessionId, mode }),
+
+  hfSearch: (query: string) => call<HfSummary[]>("hf_search", { query }),
+  hfRepo: (repo: string) => call<HfRepo>("hf_repo", { repo }),
+  installHf: (repo: string, quant: string, onProgress: (p: Progress) => void) =>
+    call<InstalledModel>("install_hf", { repo, quant, onProgress: channel(onProgress) }),
+
+  providers: () => call<ProviderView[]>("list_providers"),
+  addProvider: (kind: ProviderKind, name: string, baseUrl: string | null, apiKey: string | null) =>
+    call<ProviderView>("add_provider", { kind, name, baseUrl, apiKey }),
+  updateProvider: (id: string, patch: { name?: string; baseUrl?: string; enabled?: boolean }) =>
+    call<void>("update_provider", { id, ...patch }),
+  setProviderKey: (id: string, key: string | null) => call<void>("set_provider_key", { id, key }),
+  removeProvider: (id: string) => call<void>("remove_provider", { id }),
+  providerModels: (id: string) => call<RemoteModel[]>("provider_models", { id }),
+  setModelPrice: (providerId: string, model: string, input: number, output: number) =>
+    call<void>("set_model_price", { providerId, model, input, output }),
+  setCloudModel: (model: CloudModel | null, price: [number, number] | null) =>
+    call<void>("set_cloud_model", { model, price }),
+  setRoutingMode: (mode: RoutingMode) => call<void>("set_routing_mode", { mode }),
+  setBudget: (budget: Budget) => call<void>("set_budget", { budget }),
+  budgetStatus: () => call<BudgetStatus>("budget_status"),
+  usageReport: () => call<UsageReport>("usage_report"),
 };
+
+export const routingLabels: Record<RoutingMode, string> = {
+  local: "Local uniquement",
+  auto: "Automatique",
+  cloud: "Cloud d'abord",
+};
+
+export const placementLabels: Record<Placement, string> = {
+  gpu: "Carte graphique",
+  hybrid: "Hybride GPU + RAM",
+  cpu: "Processeur",
+  toobig: "Trop gros",
+};
+
+export function formatUsd(v: number | null | undefined): string {
+  if (v == null) return "—";
+  return v.toLocaleString("fr-FR", { style: "currency", currency: "USD", maximumFractionDigits: v < 1 ? 4 : 2 });
+}
 
 export const modelKey = (id: string, quant: string) => `${id}:${quant}`;
 

@@ -2,8 +2,9 @@
 
 import { Check, Download, Trash2 } from "lucide-react";
 import { useEffect, useState } from "react";
-import { api, modelKey, type ActiveModel, type Recommendation } from "../api";
+import { api, modelKey, placementLabels, type ActiveModel, type Recommendation } from "../api";
 import { DownloadRow } from "../components/DownloadRow";
+import { HfSearch } from "../components/HfSearch";
 import { useStore } from "../store";
 import { Badge, Button, Card, ErrorNote, PageHeader, Spinner, formatBytes } from "../ui";
 
@@ -142,7 +143,7 @@ export function Models() {
                     <span className="font-medium">{r.model_name}</span>
                     <Badge>{r.quant}</Badge>
                     {i === 0 && !showAll && <Badge tone="accent">Recommandé</Badge>}
-                    <Badge>{r.placement === "gpu" ? "Carte graphique" : "Processeur"}</Badge>
+                    <Badge>{placementLabels[r.placement]}</Badge>
                   </div>
                   <p className="mt-0.5 text-sm text-[var(--muted)]">{r.description}</p>
                   <p className="text-xs text-[var(--muted)]">
@@ -166,6 +167,16 @@ export function Models() {
             </Card>
           );
         })}
+      </section>
+
+      <section className="space-y-3">
+        <div>
+          <h2 className="font-medium">Rechercher sur Hugging Face</h2>
+          <p className="text-sm text-[var(--muted)]">
+            Tous les modèles au format GGUF, avec une estimation de ce qui tient sur cette machine.
+          </p>
+        </div>
+        <HfSearch />
       </section>
     </div>
   );

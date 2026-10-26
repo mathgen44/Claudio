@@ -2,15 +2,19 @@
 //! conversations. L'application de bureau et l'outil en ligne de commande
 //! n'en sont que des façades.
 
+mod cloud;
+mod conversation;
+mod hub;
+pub mod router;
+
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex, RwLock};
-use std::time::Instant;
 
 use anyhow::{Context, Result, bail};
 use claudio_core::config::ActiveModel;
-use claudio_core::{AppPaths, Config, Database, Message, MessageMeta, Role, Session, secrets};
+use claudio_core::{AppPaths, Config, Database, secrets};
 use claudio_hw::{HardwareInfo, MachineProfile};
-use claudio_llm::chat::{self, ChatEvent, ChatMessage, Endpoint, Options};
+use claudio_llm::chat::Endpoint;
 use claudio_llm::ollama::{self, OllamaModel};
 use claudio_llm::runtime::{self, InstallEvent, InstalledRuntime};
 use claudio_llm::{LocalEngine, ServerConfig};
@@ -24,6 +28,9 @@ pub use claudio_core;
 pub use claudio_hw;
 pub use claudio_llm;
 pub use claudio_models;
+pub use cloud::{BudgetStatus, ProviderView, UsageReport};
+pub use conversation::{Reply, StreamEvent};
+pub use hub::{RepoView, VariantView};
 
 pub const DEFAULT_SESSION_TITLE: &str = "Nouvelle conversation";
 
@@ -31,12 +38,12 @@ pub struct Claudio {
     pub paths: AppPaths,
     config: RwLock<Config>,
     pub db: Database,
-    http: reqwest::Client,
+    pub(crate) http: reqwest::Client,
     hw: RwLock<HardwareInfo>,
     pub catalog: Catalog,
     engine: LocalEngine,
     downloads: Mutex<HashMap<String, CancelToken>>,
-    chats: Mutex<HashMap<String, CancelToken>>,
+    pub(crate) chats: Mutex<HashMap<String, CancelToken>>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -62,15 +69,6 @@ pub struct Recommendation {
     pub installed: bool,
     pub description: String,
     pub license: String,
-}
-
-/// Fin d'une réponse : le message enregistré et quelques mesures.
-#[derive(Debug, Clone, Serialize)]
-pub struct Reply {
-    pub message: Message,
-    pub reasoning: String,
-    pub tokens_per_sec: Option<f64>,
-    pub cancelled: bool,
 }
 
 impl Claudio {
@@ -110,7 +108,7 @@ impl Claudio {
         Registry::new(self.config().models_dir(&self.paths))
     }
 
-    fn hf_token(&self) -> Option<String> {
+    pub(crate) fn hf_token(&self) -> Option<String> {
         secrets::get(secrets::HF_TOKEN).ok().flatten()
     }
 
@@ -207,6 +205,27 @@ impl Claudio {
         token
     }
 
+    pub(crate) fn begin_download(&self, key: &str) -> Result<CancelToken> {
+        if self.downloads.lock().unwrap().contains_key(key) {
+            bail!("ce modèle est déjà en cours de téléchargement");
+        }
+        Ok(self.register_download(key))
+    }
+
+    pub(crate) fn end_download(&self, key: &str) {
+        self.downloads.lock().unwrap().remove(key);
+    }
+
+    /// Le premier modèle installé devient le modèle actif.
+    pub(crate) fn after_install(&self, installed: InstalledModel) -> Result<InstalledModel> {
+        if self.config().active_model.is_none() {
+            self.set_active_model(ActiveModel::Local {
+                id: installed.key.clone(),
+            })?;
+        }
+        Ok(installed)
+    }
+
     pub fn cancel_download(&self, key: &str) {
         if let Some(t) = self.downloads.lock().unwrap().get(key) {
             t.cancel();
@@ -224,10 +243,7 @@ impl Claudio {
             .get(model_id)
             .with_context(|| format!("modèle inconnu : {model_id}"))?;
         let key = catalog::model_key(model_id, quant);
-        if self.downloads.lock().unwrap().contains_key(&key) {
-            bail!("ce modèle est déjà en cours de téléchargement");
-        }
-        let cancel = self.register_download(&key);
+        let cancel = self.begin_download(&key)?;
         let token = self.hf_token();
         let res = claudio_models::install(
             &self.http,
@@ -239,15 +255,8 @@ impl Claudio {
             on_progress,
         )
         .await;
-        self.downloads.lock().unwrap().remove(&key);
-        let installed = res?;
-        // Premier modèle installé : il devient le modèle actif.
-        if self.config().active_model.is_none() {
-            self.set_active_model(ActiveModel::Local {
-                id: installed.key.clone(),
-            })?;
-        }
-        Ok(installed)
+        self.end_download(&key);
+        self.after_install(res?)
     }
 
     pub async fn remove_model(&self, key: &str) -> Result<()> {
@@ -301,11 +310,13 @@ impl Claudio {
         m: &InstalledModel,
     ) -> Result<ServerConfig> {
         let profile = self.hardware().profile();
-        let model = self.catalog.get(&m.model_id);
+        let model_max = m
+            .context_max
+            .or_else(|| self.catalog.get(&m.model_id).map(|c| c.context_max));
         let ctx = cfg
             .context_size
             .unwrap_or(DEFAULT_CONTEXT)
-            .min(model.map(|m| m.context_max).unwrap_or(DEFAULT_CONTEXT));
+            .min(model_max.unwrap_or(u32::MAX));
         Ok(ServerConfig {
             exe: rt.server_exe(),
             model_path: self.registry().path_of(m),
@@ -316,134 +327,15 @@ impl Claudio {
         })
     }
 
-    /// Raisonnement : choix de l'utilisateur, sinon activé pour les modèles assez grands
-    /// (les petits modèles tournent en rond quand ils réfléchissent).
-    fn thinking_for(&self, cfg: &Config) -> Option<bool> {
-        match &cfg.active_model {
-            Some(ActiveModel::Local { id }) => {
-                let params = catalog::split_key(id)
-                    .and_then(|(m, _)| self.catalog.get(m))
-                    .map(|m| m.params_b)
-                    .unwrap_or(0.0);
-                Some(cfg.thinking.unwrap_or(params >= 9.0))
-            }
-            _ => cfg.thinking,
-        }
-    }
-
-    // ---- Conversations ------------------------------------------------------
-
-    pub fn create_session(&self) -> Result<Session> {
-        self.db.create_session(DEFAULT_SESSION_TITLE)
-    }
-
-    pub fn cancel_chat(&self, session_id: &str) {
-        if let Some(t) = self.chats.lock().unwrap().get(session_id) {
-            t.cancel();
-        }
-    }
-
-    /// Ajoute le message de l'utilisateur, fait répondre le modèle actif en continu
-    /// et enregistre la réponse.
-    pub async fn send_message(
-        &self,
-        session_id: &str,
-        text: &str,
-        on_event: impl FnMut(ChatEvent),
-    ) -> Result<Reply> {
-        let session = self
-            .db
-            .get_session(session_id)?
-            .context("conversation introuvable")?;
-        let text = text.trim();
-        if text.is_empty() {
-            bail!("message vide");
-        }
-        self.db
-            .add_message(session_id, Role::User, text, MessageMeta::default())?;
-        if session.title == DEFAULT_SESSION_TITLE {
-            self.db.rename_session(session_id, &title_from(text))?;
-        }
-
-        let cfg = self.config();
-        let mut messages = vec![ChatMessage {
-            role: "system".into(),
-            content: cfg.system_prompt.clone(),
-        }];
-        messages.extend(
-            self.db
-                .list_messages(session_id)?
-                .into_iter()
-                .map(|m| ChatMessage {
-                    role: m.role.as_str().to_owned(),
-                    content: m.content,
-                }),
-        );
-
-        let endpoint = self.active_endpoint().await?;
-        let opts = Options {
-            thinking: self.thinking_for(&cfg),
-            ..Default::default()
-        };
-        let cancel = CancelToken::default();
-        self.chats
-            .lock()
-            .unwrap()
-            .insert(session_id.to_owned(), cancel.clone());
-        let started = Instant::now();
-        let res =
-            chat::stream_chat(&self.http, &endpoint, &messages, &opts, &cancel, on_event).await;
-        self.chats.lock().unwrap().remove(session_id);
-        let done = res?;
-
-        let content = if done.content.is_empty() && done.cancelled {
-            "*(réponse interrompue)*".to_owned()
-        } else {
-            done.content
-        };
-        let message = self.db.add_message(
-            session_id,
-            Role::Assistant,
-            &content,
-            MessageMeta {
-                model: Some(endpoint.model.clone()),
-                tokens: done.completion_tokens.map(|n| n as i64),
-                duration_ms: Some(started.elapsed().as_millis() as i64),
-            },
-        )?;
-        Ok(Reply {
-            message,
-            reasoning: done.reasoning,
-            tokens_per_sec: done.tokens_per_sec,
-            cancelled: done.cancelled,
-        })
-    }
-
     /// Arrête proprement les moteurs (appelé à la fermeture).
     pub async fn shutdown(&self) {
         self.engine.unload().await;
     }
 }
 
-/// Titre court tiré du premier message.
-fn title_from(text: &str) -> String {
-    let line = text.lines().next().unwrap_or(text).trim();
-    let mut title: String = line.chars().take(48).collect();
-    if line.chars().count() > 48 {
-        title.push('…');
-    }
-    title
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn titles() {
-        assert_eq!(title_from("Bonjour\nsuite"), "Bonjour");
-        assert!(title_from(&"a".repeat(100)).ends_with('…'));
-    }
 
     #[test]
     fn opens_in_portable_dir() {

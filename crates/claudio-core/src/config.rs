@@ -25,6 +25,89 @@ pub struct Config {
     pub system_prompt: String,
     /// Étape « Mise en route » terminée.
     pub onboarding_done: bool,
+    /// Fournisseurs de modèles distants (les clés sont dans le Gestionnaire d'identifiants).
+    pub providers: Vec<ProviderConfig>,
+    pub routing: Routing,
+    pub budget: Budget,
+}
+
+/// Famille d'API d'un fournisseur distant.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ProviderKind {
+    Anthropic,
+    OpenAi,
+    Mistral,
+    Gemini,
+    OpenRouter,
+    /// Toute API compatible OpenAI (LM Studio, vLLM, serveur maison…).
+    Custom,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ProviderConfig {
+    pub id: String,
+    pub kind: ProviderKind,
+    pub name: String,
+    /// Adresse de l'API ; obligatoire pour `Custom`, sinon celle du fournisseur.
+    pub base_url: Option<String>,
+    pub enabled: bool,
+    /// Prix connus par modèle, en dollars par million de jetons.
+    #[serde(default)]
+    pub prices: Vec<ModelPrice>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ModelPrice {
+    pub model: String,
+    pub input_per_m: f64,
+    pub output_per_m: f64,
+}
+
+impl ProviderConfig {
+    /// Nom du secret contenant la clé d'API.
+    pub fn secret_name(&self) -> String {
+        format!("provider-{}", self.id)
+    }
+
+    pub fn price(&self, model: &str) -> Option<&ModelPrice> {
+        self.prices.iter().find(|p| p.model == model)
+    }
+}
+
+/// Où envoyer les demandes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum RoutingMode {
+    /// Toujours le modèle local ; rien ne sort de la machine.
+    Local,
+    /// Local d'abord ; le cloud seulement si le local ne peut pas répondre.
+    #[default]
+    Auto,
+    /// Le modèle distant d'abord, le local en repli.
+    Cloud,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CloudModel {
+    pub provider_id: String,
+    pub model: String,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(default)]
+pub struct Routing {
+    pub mode: RoutingMode,
+    /// Modèle distant utilisé par le routeur.
+    pub cloud: Option<CloudModel>,
+}
+
+/// Plafonds de dépense en dollars ; au-delà, le cloud est bloqué.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(default)]
+pub struct Budget {
+    pub daily_usd: Option<f64>,
+    pub monthly_usd: Option<f64>,
 }
 
 /// Référence vers le modèle actif, quel que soit le moteur qui le sert.
@@ -52,6 +135,9 @@ impl Default for Config {
             thinking: None,
             system_prompt: DEFAULT_SYSTEM_PROMPT.to_owned(),
             onboarding_done: false,
+            providers: Vec::new(),
+            routing: Routing::default(),
+            budget: Budget::default(),
         }
     }
 }
@@ -74,6 +160,10 @@ impl Config {
         std::fs::write(&tmp, text).with_context(|| format!("écriture de {}", tmp.display()))?;
         std::fs::rename(&tmp, path).with_context(|| format!("écriture de {}", path.display()))?;
         Ok(())
+    }
+
+    pub fn provider(&self, id: &str) -> Option<&ProviderConfig> {
+        self.providers.iter().find(|p| p.id == id)
     }
 
     pub fn models_dir(&self, paths: &AppPaths) -> PathBuf {

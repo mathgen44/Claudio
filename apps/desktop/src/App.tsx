@@ -1,15 +1,16 @@
 import clsx from "clsx";
-import { Boxes, MessageSquare, Settings as SettingsIcon } from "lucide-react";
+import { Boxes, Cloud as CloudIcon, MessageSquare, Settings as SettingsIcon } from "lucide-react";
 import { useEffect, useState, type ReactNode } from "react";
 import { DownloadRow } from "./components/DownloadRow";
 import { StoreProvider, useStore } from "./store";
 import { ErrorNote, Spinner } from "./ui";
 import { Chat } from "./views/Chat";
+import { Cloud } from "./views/Cloud";
 import { Models } from "./views/Models";
 import { Onboarding } from "./views/Onboarding";
 import { Settings } from "./views/Settings";
 
-type View = "chat" | "models" | "settings" | "onboarding";
+type View = "chat" | "models" | "cloud" | "settings" | "onboarding";
 
 export default function App() {
   return (
@@ -51,6 +52,9 @@ function Shell() {
         <NavButton label="Modèles" active={view === "models"} onClick={() => setView("models")}>
           <Boxes size={20} />
         </NavButton>
+        <NavButton label="Cloud et budgets" active={view === "cloud"} onClick={() => setView("cloud")}>
+          <CloudIcon size={20} />
+        </NavButton>
         <div className="flex-1" />
         <NavButton label="Paramètres" active={view === "settings" || view === "onboarding"} onClick={() => setView("settings")}>
           <SettingsIcon size={20} />
@@ -68,6 +72,7 @@ function Shell() {
           {view === "onboarding" && <Onboarding onDone={() => setView("chat")} />}
           {view === "chat" && <Chat onOpenModels={() => setView("models")} />}
           {view === "models" && <Models />}
+          {view === "cloud" && <Cloud />}
           {view === "settings" && <Settings onRestartOnboarding={() => setView("onboarding")} />}
         </div>
       </main>

@@ -3,12 +3,18 @@
 
 use std::sync::Arc;
 
-use claudio_app::claudio_core::config::ActiveModel;
+use claudio_app::claudio_core::config::{
+    ActiveModel, Budget, CloudModel, ProviderKind, RoutingMode,
+};
 use claudio_app::claudio_core::{AppPaths, Config, Message, Session};
-use claudio_app::claudio_llm::ChatEvent;
+use claudio_app::claudio_llm::providers::RemoteModel;
 use claudio_app::claudio_llm::runtime::{InstallEvent, InstalledRuntime};
+use claudio_app::claudio_models::hf::ModelSummary;
 use claudio_app::claudio_models::{InstalledModel, Progress};
-use claudio_app::{Claudio, Recommendation, Reply, Status};
+use claudio_app::{
+    BudgetStatus, Claudio, ProviderView, Recommendation, Reply, RepoView, Status, StreamEvent,
+    UsageReport,
+};
 use serde::Deserialize;
 use tauri::ipc::Channel;
 use tauri::{Manager, State};
@@ -170,7 +176,7 @@ async fn send_message(
     app: App<'_>,
     session_id: String,
     text: String,
-    on_event: Channel<ChatEvent>,
+    on_event: Channel<StreamEvent>,
 ) -> CmdResult<Reply> {
     app.send_message(&session_id, &text, |ev| {
         let _ = on_event.send(ev);
@@ -182,6 +188,129 @@ async fn send_message(
 #[tauri::command]
 fn cancel_chat(app: App<'_>, session_id: String) {
     app.cancel_chat(&session_id);
+}
+
+#[tauri::command]
+fn set_session_route(app: App<'_>, session_id: String, mode: Option<String>) -> CmdResult<()> {
+    app.set_session_route(&session_id, mode.as_deref())
+        .map_err(err)
+}
+
+// ---- Hugging Face -----------------------------------------------------------
+
+#[tauri::command]
+async fn hf_search(app: App<'_>, query: String) -> CmdResult<Vec<ModelSummary>> {
+    app.hf_search(&query).await.map_err(err)
+}
+
+#[tauri::command]
+async fn hf_repo(app: App<'_>, repo: String) -> CmdResult<RepoView> {
+    app.hf_repo(&repo).await.map_err(err)
+}
+
+#[tauri::command]
+async fn install_hf(
+    app: App<'_>,
+    repo: String,
+    quant: String,
+    on_progress: Channel<Progress>,
+) -> CmdResult<InstalledModel> {
+    app.install_hf(&repo, &quant, |p| {
+        let _ = on_progress.send(p.clone());
+    })
+    .await
+    .map_err(err)
+}
+
+// ---- Fournisseurs, routage, budgets ------------------------------------------
+
+#[tauri::command]
+fn list_providers(app: App<'_>) -> Vec<ProviderView> {
+    app.providers()
+}
+
+#[tauri::command]
+fn add_provider(
+    app: App<'_>,
+    kind: ProviderKind,
+    name: String,
+    base_url: Option<String>,
+    api_key: Option<String>,
+) -> CmdResult<ProviderView> {
+    app.add_provider(kind, &name, base_url.as_deref(), api_key.as_deref())
+        .map_err(err)
+}
+
+/// `base_url` vide = adresse par défaut du fournisseur.
+#[tauri::command]
+fn update_provider(
+    app: App<'_>,
+    id: String,
+    name: Option<String>,
+    base_url: Option<String>,
+    enabled: Option<bool>,
+) -> CmdResult<()> {
+    let base_url = base_url
+        .as_deref()
+        .map(|u| Some(u).filter(|u| !u.trim().is_empty()));
+    app.update_provider(&id, name.as_deref(), base_url, enabled)
+        .map_err(err)
+}
+
+#[tauri::command]
+fn set_provider_key(app: App<'_>, id: String, key: Option<String>) -> CmdResult<()> {
+    app.set_provider_key(&id, key.as_deref()).map_err(err)
+}
+
+#[tauri::command]
+fn remove_provider(app: App<'_>, id: String) -> CmdResult<()> {
+    app.remove_provider(&id).map_err(err)
+}
+
+#[tauri::command]
+async fn provider_models(app: App<'_>, id: String) -> CmdResult<Vec<RemoteModel>> {
+    app.provider_models(&id).await.map_err(err)
+}
+
+#[tauri::command]
+fn set_model_price(
+    app: App<'_>,
+    provider_id: String,
+    model: String,
+    input: f64,
+    output: f64,
+) -> CmdResult<()> {
+    app.set_model_price(&provider_id, &model, input, output)
+        .map_err(err)
+}
+
+#[tauri::command]
+fn set_cloud_model(
+    app: App<'_>,
+    model: Option<CloudModel>,
+    price: Option<(f64, f64)>,
+) -> CmdResult<()> {
+    app.set_cloud_model(model, price).map_err(err)
+}
+
+#[tauri::command]
+fn set_routing_mode(app: App<'_>, mode: RoutingMode) -> CmdResult<()> {
+    app.set_routing_mode(mode).map_err(err)
+}
+
+#[tauri::command]
+fn set_budget(app: App<'_>, budget: Budget) -> CmdResult<()> {
+    app.set_budget(budget).map_err(err)
+}
+
+#[tauri::command]
+fn budget_status(app: App<'_>) -> CmdResult<BudgetStatus> {
+    app.budget_status().map_err(err)
+}
+
+#[tauri::command]
+fn usage_report(app: App<'_>) -> CmdResult<UsageReport> {
+    app.usage_report().map_err(err)
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -224,6 +353,22 @@ pub fn run() {
             list_messages,
             send_message,
             cancel_chat,
+            set_session_route,
+            hf_search,
+            hf_repo,
+            install_hf,
+            list_providers,
+            add_provider,
+            update_provider,
+            set_provider_key,
+            remove_provider,
+            provider_models,
+            set_model_price,
+            set_cloud_model,
+            set_routing_mode,
+            set_budget,
+            budget_status,
+            usage_report,
         ])
         .build(tauri::generate_context!())
         .expect("construction de l'application")

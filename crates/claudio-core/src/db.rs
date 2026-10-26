@@ -9,7 +9,8 @@ use rusqlite::{Connection, OptionalExtension, Row, params};
 use serde::{Deserialize, Serialize};
 
 /// Migrations appliquées dans l'ordre ; l'index suivant est stocké dans `user_version`.
-const MIGRATIONS: &[&str] = &[r#"
+const MIGRATIONS: &[&str] = &[
+    r#"
     CREATE TABLE sessions (
         id          TEXT PRIMARY KEY,
         title       TEXT NOT NULL,
@@ -27,7 +28,26 @@ const MIGRATIONS: &[&str] = &[r#"
         created_at  TEXT NOT NULL
     );
     CREATE INDEX messages_session ON messages(session_id, id);
-"#];
+"#,
+    r#"
+    ALTER TABLE sessions ADD COLUMN route TEXT;
+    ALTER TABLE messages ADD COLUMN reasoning TEXT;
+    ALTER TABLE messages ADD COLUMN route TEXT;
+    ALTER TABLE messages ADD COLUMN cost_usd REAL;
+    CREATE TABLE usage (
+        id            INTEGER PRIMARY KEY AUTOINCREMENT,
+        at            TEXT NOT NULL,
+        session_id    TEXT,
+        provider      TEXT NOT NULL,
+        model         TEXT NOT NULL,
+        local         INTEGER NOT NULL,
+        input_tokens  INTEGER NOT NULL,
+        output_tokens INTEGER NOT NULL,
+        cost_usd      REAL
+    );
+    CREATE INDEX usage_at ON usage(at);
+"#,
+];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -60,6 +80,8 @@ impl Role {
 pub struct Session {
     pub id: String,
     pub title: String,
+    /// Mode de routage propre à la conversation (`local`, `auto`, `cloud`) ; sinon celui par défaut.
+    pub route: Option<String>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }
@@ -73,6 +95,10 @@ pub struct Message {
     pub model: Option<String>,
     pub tokens: Option<i64>,
     pub duration_ms: Option<i64>,
+    pub reasoning: Option<String>,
+    /// Pourquoi ce modèle a répondu (décision du routeur).
+    pub route: Option<String>,
+    pub cost_usd: Option<f64>,
     pub created_at: DateTime<Utc>,
 }
 
@@ -82,6 +108,9 @@ pub struct MessageMeta {
     pub model: Option<String>,
     pub tokens: Option<i64>,
     pub duration_ms: Option<i64>,
+    pub reasoning: Option<String>,
+    pub route: Option<String>,
+    pub cost_usd: Option<f64>,
 }
 
 #[derive(Clone)]
@@ -89,12 +118,15 @@ pub struct Database {
     conn: Arc<Mutex<Connection>>,
 }
 
+const SESSION_COLUMNS: &str = "id, title, route, created_at, updated_at";
+
 fn session_from_row(r: &Row<'_>) -> rusqlite::Result<Session> {
     Ok(Session {
         id: r.get(0)?,
         title: r.get(1)?,
-        created_at: r.get(2)?,
-        updated_at: r.get(3)?,
+        route: r.get(2)?,
+        created_at: r.get(3)?,
+        updated_at: r.get(4)?,
     })
 }
 
@@ -124,7 +156,7 @@ impl Database {
         })
     }
 
-    fn with<T>(&self, f: impl FnOnce(&Connection) -> rusqlite::Result<T>) -> Result<T> {
+    pub(crate) fn with<T>(&self, f: impl FnOnce(&Connection) -> rusqlite::Result<T>) -> Result<T> {
         let conn = self.conn.lock().expect("verrou de la base empoisonné");
         Ok(f(&conn)?)
     }
@@ -134,6 +166,7 @@ impl Database {
         let session = Session {
             id: uuid::Uuid::new_v4().to_string(),
             title: title.to_owned(),
+            route: None,
             created_at: now,
             updated_at: now,
         };
@@ -148,9 +181,9 @@ impl Database {
 
     pub fn list_sessions(&self) -> Result<Vec<Session>> {
         self.with(|c| {
-            c.prepare(
-                "SELECT id, title, created_at, updated_at FROM sessions ORDER BY updated_at DESC",
-            )?
+            c.prepare(&format!(
+                "SELECT {SESSION_COLUMNS} FROM sessions ORDER BY updated_at DESC"
+            ))?
             .query_map([], session_from_row)?
             .collect()
         })
@@ -159,7 +192,7 @@ impl Database {
     pub fn get_session(&self, id: &str) -> Result<Option<Session>> {
         self.with(|c| {
             c.query_row(
-                "SELECT id, title, created_at, updated_at FROM sessions WHERE id = ?1",
+                &format!("SELECT {SESSION_COLUMNS} FROM sessions WHERE id = ?1"),
                 [id],
                 session_from_row,
             )
@@ -172,6 +205,16 @@ impl Database {
             c.execute(
                 "UPDATE sessions SET title = ?2 WHERE id = ?1",
                 params![id, title],
+            )
+        })?;
+        Ok(())
+    }
+
+    pub fn set_session_route(&self, id: &str, route: Option<&str>) -> Result<()> {
+        self.with(|c| {
+            c.execute(
+                "UPDATE sessions SET route = ?2 WHERE id = ?1",
+                params![id, route],
             )
         })?;
         Ok(())
@@ -192,9 +235,21 @@ impl Database {
         let now = Utc::now();
         let id = self.with(|c| {
             c.execute(
-                "INSERT INTO messages (session_id, role, content, model, tokens, duration_ms, created_at)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
-                params![session_id, role.as_str(), content, meta.model, meta.tokens, meta.duration_ms, now],
+                "INSERT INTO messages (session_id, role, content, model, tokens, duration_ms,
+                                       reasoning, route, cost_usd, created_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+                params![
+                    session_id,
+                    role.as_str(),
+                    content,
+                    meta.model,
+                    meta.tokens,
+                    meta.duration_ms,
+                    meta.reasoning,
+                    meta.route,
+                    meta.cost_usd,
+                    now
+                ],
             )?;
             c.execute(
                 "UPDATE sessions SET updated_at = ?2 WHERE id = ?1",
@@ -210,6 +265,9 @@ impl Database {
             model: meta.model,
             tokens: meta.tokens,
             duration_ms: meta.duration_ms,
+            reasoning: meta.reasoning,
+            route: meta.route,
+            cost_usd: meta.cost_usd,
             created_at: now,
         })
     }
@@ -217,7 +275,8 @@ impl Database {
     pub fn list_messages(&self, session_id: &str) -> Result<Vec<Message>> {
         let rows = self.with(|c| {
             c.prepare(
-                "SELECT id, session_id, role, content, model, tokens, duration_ms, created_at
+                "SELECT id, session_id, role, content, model, tokens, duration_ms, created_at,
+                        reasoning, route, cost_usd
                  FROM messages WHERE session_id = ?1 ORDER BY id",
             )?
             .query_map([session_id], |r| {
@@ -232,6 +291,9 @@ impl Database {
                         tokens: r.get(5)?,
                         duration_ms: r.get(6)?,
                         created_at: r.get(7)?,
+                        reasoning: r.get(8)?,
+                        route: r.get(9)?,
+                        cost_usd: r.get(10)?,
                     },
                 ))
             })?

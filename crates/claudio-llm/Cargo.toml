@@ -7,6 +7,7 @@ authors.workspace = true
 
 [dependencies]
 anyhow = "1.0.104"
+claudio-core = { version = "0.1.0", path = "../claudio-core" }
 claudio-hw = { version = "0.1.0", path = "../claudio-hw" }
 claudio-models = { version = "0.1.0", path = "../claudio-models" }
 futures-util = "0.3.34"
@@ -17,3 +18,6 @@ tokio = { version = "1.54.1", features = ["process", "sync", "rt", "macros", "ti
 tracing = "0.1.44"
 windows = { version = "0.62.2", features = ["Win32_System_JobObjects", "Win32_Foundation", "Win32_System_Threading", "Win32_Security"] }
 zip = "9.1.2"
+
+[dev-dependencies]
+tokio = { version = "1.54.1", features = ["rt-multi-thread", "macros", "net", "io-util"] }
