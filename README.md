@@ -5,7 +5,7 @@ tourner des modèles de langage sur ta machine, en s'adaptant à sa puissance.
 
 Voir [PLAN.md](PLAN.md) pour la vision complète et la feuille de route.
 
-## État actuel (phases 0 à 2)
+## État actuel (phases 0 à 3)
 
 - Détection du matériel (processeur, mémoire, cartes graphiques via DXGI et NVML) et profil de machine S / M / L / XL.
 - Catalogue de modèles GGUF (Qwen 3.5, Gemma 4, Qwen 3.6/3.8…) classés selon ce qui tient en mémoire.
@@ -18,6 +18,10 @@ Voir [PLAN.md](PLAN.md) pour la vision complète et la feuille de route.
 - Fournisseurs distants : Anthropic (API Messages native), OpenAI, Mistral, Gemini, OpenRouter et toute API compatible OpenAI.
 - Routeur local / automatique / cloud, réglable par conversation, avec repli quand une cible échoue avant de répondre.
 - Coûts par message, consommation par modèle, plafonds journalier et mensuel qui bloquent le cloud.
+- Outils de l'assistant : fichiers (lister, lire, chercher, écrire, déplacer, corbeille), web (page, recherche), PowerShell, serveurs MCP (stdio et HTTP).
+- Permissions : rien n'est accessible par défaut ; dossiers en lecture ou lecture/écriture, sites, outils MCP, accordés une fois, pour la conversation ou toujours. Suppression, remplacement de fichier (avec sauvegarde) et commandes toujours confirmés ; emplacements sensibles inaccessibles ; réseau local refusé par défaut.
+- Bac à sable des commandes : PowerShell en intégrité basse (écriture limitée à l'espace de travail), job Windows (délai, mémoire, processus), variables secrètes retirées.
+- Journal d'activité en ajout seul, chaîné par empreintes SHA-256, consultable dans l'application.
 
 ## Développement
 
@@ -77,7 +81,9 @@ python -I scripts/update_catalog.py
 | `crates/claudio-hw` | Profileur matériel |
 | `crates/claudio-models` | Catalogue, choix du modèle, Hugging Face, téléchargements, registre |
 | `crates/claudio-llm` | llama.cpp (installation, processus), Ollama, flux OpenAI et Anthropic, fournisseurs distants |
-| `crates/claudio-app` | Services partagés par l'application et l'outil : routeur, conversations, hub, cloud et budgets |
+| `crates/claudio-perms` | Moteur de permissions, normalisation des chemins, bac à sable PowerShell |
+| `crates/claudio-tools` | Outils (fichiers, web, PowerShell) et client MCP |
+| `crates/claudio-app` | Services partagés par l'application et l'outil : routeur, boucle d'agent, hub, cloud, accès |
 | `apps/desktop` | Application Tauri 2 (React + TypeScript + Tailwind) |
 | `catalog/` | Catalogue des modèles recommandés |
 
@@ -92,3 +98,8 @@ python -I scripts/update_catalog.py
 | `%LOCALAPPDATA%\Claudio\logs` | Journaux (niveau réglable avec `CLAUDIO_LOG`) |
 
 La variable `CLAUDIO_HOME` regroupe tout dans un seul dossier (mode portable).
+
+> **Lancé depuis l'application Claude (Windows)** : Claude est une application empaquetée (MSIX) et les
+> programmes qu'elle lance voient `%APPDATA%` et `%LOCALAPPDATA%` redirigés vers
+> `%LOCALAPPDATA%\Packages\Claude_…\LocalCache\`. Les données créées pendant le développement assisté
+> s'y trouvent ; lancé normalement, Claudio utilise les vrais dossiers ci-dessus.

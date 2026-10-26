@@ -1,5 +1,6 @@
 //! Socle commun de Claudio : chemins, configuration, journaux, secrets et base de données.
 
+pub mod audit;
 pub mod config;
 pub mod db;
 pub mod logging;

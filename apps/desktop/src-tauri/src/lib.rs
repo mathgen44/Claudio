@@ -3,17 +3,21 @@
 
 use std::sync::Arc;
 
+use claudio_app::claudio_core::audit::AuditEntry;
 use claudio_app::claudio_core::config::{
-    ActiveModel, Budget, CloudModel, ProviderKind, RoutingMode,
+    ActiveModel, Budget, CloudModel, McpServerConfig, McpTransport, Permissions, ProviderKind,
+    RoutingMode,
 };
 use claudio_app::claudio_core::{AppPaths, Config, Message, Session};
 use claudio_app::claudio_llm::providers::RemoteModel;
 use claudio_app::claudio_llm::runtime::{InstallEvent, InstalledRuntime};
 use claudio_app::claudio_models::hf::ModelSummary;
 use claudio_app::claudio_models::{InstalledModel, Progress};
+use claudio_app::claudio_perms::Answer;
+use claudio_app::claudio_tools::mcp::McpTool;
 use claudio_app::{
-    BudgetStatus, Claudio, ProviderView, Recommendation, Reply, RepoView, Status, StreamEvent,
-    UsageReport,
+    AccessOverview, BudgetStatus, Claudio, ProviderView, Recommendation, Reply, RepoView, Status,
+    StreamEvent, UsageReport,
 };
 use serde::Deserialize;
 use tauri::ipc::Channel;
@@ -141,6 +145,7 @@ fn open_folder(app: App<'_>, which: String) -> CmdResult<()> {
         "logs" => app.paths.logs_dir(),
         "models" => app.registry().root().to_path_buf(),
         "data" => app.paths.data_dir.clone(),
+        "workspace" => app.paths.workspace_dir(),
         _ => return Err("dossier inconnu".into()),
     };
     tauri_plugin_opener::open_path(path, None::<&str>).map_err(|e| e.to_string())
@@ -313,6 +318,73 @@ fn usage_report(app: App<'_>) -> CmdResult<UsageReport> {
     app.usage_report().map_err(err)
 }
 
+// ---- Outils et accès -----------------------------------------------------------
+
+#[tauri::command]
+fn answer_approval(app: App<'_>, id: String, answer: Answer) -> CmdResult<()> {
+    app.answer_approval(&id, answer).map_err(err)
+}
+
+#[tauri::command]
+fn access_overview(app: App<'_>) -> CmdResult<AccessOverview> {
+    app.access_overview().map_err(err)
+}
+
+#[tauri::command]
+fn grant_folder(app: App<'_>, path: String, write: bool) -> CmdResult<()> {
+    app.grant_folder(std::path::Path::new(&path), write)
+        .map_err(err)
+}
+
+#[tauri::command]
+fn revoke_grant(app: App<'_>, id: i64) -> CmdResult<()> {
+    app.revoke_grant(id).map_err(err)
+}
+
+#[tauri::command]
+fn set_permissions(app: App<'_>, permissions: Permissions) -> CmdResult<()> {
+    app.set_permissions(permissions).map_err(err)
+}
+
+#[tauri::command]
+fn set_tools_enabled(app: App<'_>, enabled: bool) -> CmdResult<()> {
+    app.set_tools_enabled(enabled).map_err(err)
+}
+
+#[tauri::command]
+fn audit_log(app: App<'_>, limit: u32, before: Option<i64>) -> CmdResult<Vec<AuditEntry>> {
+    app.audit_log(limit, before).map_err(err)
+}
+
+#[tauri::command]
+fn verify_audit(app: App<'_>) -> CmdResult<Option<i64>> {
+    app.verify_audit().map_err(err)
+}
+
+#[tauri::command]
+fn add_mcp_server(
+    app: App<'_>,
+    name: String,
+    transport: McpTransport,
+) -> CmdResult<McpServerConfig> {
+    app.add_mcp_server(&name, transport).map_err(err)
+}
+
+#[tauri::command]
+fn set_mcp_enabled(app: App<'_>, id: String, enabled: bool) -> CmdResult<()> {
+    app.set_mcp_enabled(&id, enabled).map_err(err)
+}
+
+#[tauri::command]
+async fn remove_mcp_server(app: App<'_>, id: String) -> CmdResult<()> {
+    app.remove_mcp_server(&id).await.map_err(err)
+}
+
+#[tauri::command]
+async fn test_mcp_server(app: App<'_>, id: String) -> CmdResult<Vec<McpTool>> {
+    app.test_mcp_server(&id).await.map_err(err)
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let paths = AppPaths::resolve().expect("dossiers de Claudio");
@@ -330,6 +402,7 @@ pub fn run() {
             }
         }))
         .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_dialog::init())
         .manage(claudio)
         .manage(guard)
         .invoke_handler(tauri::generate_handler![
@@ -369,6 +442,18 @@ pub fn run() {
             set_budget,
             budget_status,
             usage_report,
+            answer_approval,
+            access_overview,
+            grant_folder,
+            revoke_grant,
+            set_permissions,
+            set_tools_enabled,
+            audit_log,
+            verify_audit,
+            add_mcp_server,
+            set_mcp_enabled,
+            remove_mcp_server,
+            test_mcp_server,
         ])
         .build(tauri::generate_context!())
         .expect("construction de l'application")

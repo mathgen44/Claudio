@@ -1,7 +1,7 @@
 // Petits composants d'interface partagés.
 
 import clsx from "clsx";
-import type { ButtonHTMLAttributes, ReactNode } from "react";
+import type { ComponentPropsWithRef, ReactNode } from "react";
 
 export function formatBytes(b: number | null | undefined): string {
   if (b == null) return "—";
@@ -17,7 +17,7 @@ export function Button({
   variant = "secondary",
   className,
   ...props
-}: ButtonHTMLAttributes<HTMLButtonElement> & { variant?: Variant }) {
+}: ComponentPropsWithRef<"button"> & { variant?: Variant }) {
   return (
     <button
       {...props}

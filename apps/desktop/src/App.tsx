@@ -1,16 +1,18 @@
 import clsx from "clsx";
-import { Boxes, Cloud as CloudIcon, MessageSquare, Settings as SettingsIcon } from "lucide-react";
+import { Boxes, Cloud as CloudIcon, MessageSquare, ScrollText, Settings as SettingsIcon, ShieldCheck } from "lucide-react";
 import { useEffect, useState, type ReactNode } from "react";
 import { DownloadRow } from "./components/DownloadRow";
 import { StoreProvider, useStore } from "./store";
 import { ErrorNote, Spinner } from "./ui";
+import { Access } from "./views/Access";
 import { Chat } from "./views/Chat";
 import { Cloud } from "./views/Cloud";
 import { Models } from "./views/Models";
+import { Journal } from "./views/Journal";
 import { Onboarding } from "./views/Onboarding";
 import { Settings } from "./views/Settings";
 
-type View = "chat" | "models" | "cloud" | "settings" | "onboarding";
+type View = "chat" | "models" | "cloud" | "access" | "journal" | "settings" | "onboarding";
 
 export default function App() {
   return (
@@ -55,6 +57,12 @@ function Shell() {
         <NavButton label="Cloud et budgets" active={view === "cloud"} onClick={() => setView("cloud")}>
           <CloudIcon size={20} />
         </NavButton>
+        <NavButton label="Outils et accès" active={view === "access"} onClick={() => setView("access")}>
+          <ShieldCheck size={20} />
+        </NavButton>
+        <NavButton label="Journal d'activité" active={view === "journal"} onClick={() => setView("journal")}>
+          <ScrollText size={20} />
+        </NavButton>
         <div className="flex-1" />
         <NavButton label="Paramètres" active={view === "settings" || view === "onboarding"} onClick={() => setView("settings")}>
           <SettingsIcon size={20} />
@@ -73,6 +81,8 @@ function Shell() {
           {view === "chat" && <Chat onOpenModels={() => setView("models")} />}
           {view === "models" && <Models />}
           {view === "cloud" && <Cloud />}
+          {view === "access" && <Access />}
+          {view === "journal" && <Journal />}
           {view === "settings" && <Settings onRestartOnboarding={() => setView("onboarding")} />}
         </div>
       </main>

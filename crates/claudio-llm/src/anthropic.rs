@@ -6,7 +6,7 @@ use serde_json::{Value, json};
 use claudio_models::CancelToken;
 
 use crate::chat::{
-    ChatEvent, ChatMessage, Completion, Endpoint, Options, http_error, read_sse, sse_data,
+    ChatEvent, ChatMessage, Completion, Endpoint, Options, ToolCall, http_error, read_sse, sse_data,
 };
 
 pub const DEFAULT_BASE_URL: &str = "https://api.anthropic.com";
@@ -57,11 +57,51 @@ pub(crate) fn request_body(endpoint: &Endpoint, messages: &[ChatMessage], opts: 
         .filter(|m| m.role == "system")
         .map(|m| m.content.as_str())
         .collect();
-    let turns: Vec<Value> = messages
-        .iter()
-        .filter(|m| m.role != "system")
-        .map(|m| json!({ "role": m.role, "content": m.content }))
-        .collect();
+    let mut turns: Vec<Value> = Vec::new();
+    for m in messages.iter().filter(|m| m.role != "system") {
+        match m.role.as_str() {
+            "tool" => {
+                let block = json!({
+                    "type": "tool_result",
+                    "tool_use_id": m.tool_call_id,
+                    "content": m.content,
+                    "is_error": m.is_error,
+                });
+                // Tous les résultats d'un même tour vont dans un seul message utilisateur.
+                let merge = turns.last().is_some_and(|t| {
+                    t["role"] == "user"
+                        && t["content"]
+                            .as_array()
+                            .is_some_and(|c| c.iter().all(|b| b["type"] == "tool_result"))
+                });
+                if merge {
+                    let last = turns.last_mut().unwrap();
+                    last["content"].as_array_mut().unwrap().push(block);
+                } else {
+                    turns.push(json!({"role": "user", "content": [block]}));
+                }
+            }
+            "assistant" => {
+                let content = m.raw.clone().unwrap_or_else(|| {
+                    let mut blocks = Vec::new();
+                    if !m.content.is_empty() || m.tool_calls.is_empty() {
+                        blocks.push(json!({"type": "text", "text": m.content}));
+                    }
+                    for c in &m.tool_calls {
+                        blocks.push(json!({
+                            "type": "tool_use",
+                            "id": c.id,
+                            "name": c.name,
+                            "input": serde_json::from_str::<Value>(&c.arguments).unwrap_or(json!({})),
+                        }));
+                    }
+                    Value::Array(blocks)
+                });
+                turns.push(json!({"role": "assistant", "content": content}));
+            }
+            role => turns.push(json!({"role": role, "content": m.content})),
+        }
+    }
     let mut body = json!({
         "model": endpoint.model,
         "max_tokens": opts.max_tokens.unwrap_or(DEFAULT_MAX_TOKENS),
@@ -78,7 +118,51 @@ pub(crate) fn request_body(endpoint: &Endpoint, messages: &[ChatMessage], opts: 
     if SERVER_FALLBACK_MODELS.contains(&endpoint.model.as_str()) {
         body["fallbacks"] = "default".into();
     }
+    if !opts.tools.is_empty() {
+        body["tools"] = opts
+            .tools
+            .iter()
+            .map(|t| {
+                json!({
+                    "name": t.name,
+                    "description": t.description,
+                    "input_schema": t.parameters,
+                    // Les gros arguments (contenu de fichier) arrivent au fil de l'eau.
+                    "eager_input_streaming": true,
+                })
+            })
+            .collect();
+    }
     body
+}
+
+/// Termine les blocs reçus : JSON des outils analysé, appels extraits.
+pub(crate) fn finish(out: &mut Completion) {
+    let mut calls = Vec::new();
+    for b in &mut out.blocks {
+        if b["type"] == "tool_use" {
+            let partial = b
+                .as_object_mut()
+                .and_then(|o| o.remove("_partial"))
+                .and_then(|p| p.as_str().map(str::to_owned))
+                .unwrap_or_default();
+            let text = if partial.trim().is_empty() {
+                "{}".to_owned()
+            } else {
+                partial
+            };
+            // Une entrée illisible est renvoyée telle quelle : l'outil répondra par une
+            // erreur que le modèle pourra corriger.
+            b["input"] = serde_json::from_str(&text).unwrap_or(json!({}));
+            calls.push(ToolCall {
+                id: b["id"].as_str().unwrap_or_default().to_owned(),
+                name: b["name"].as_str().unwrap_or_default().to_owned(),
+                arguments: text,
+            });
+        }
+    }
+    out.tool_calls = calls;
+    out.raw = (!out.blocks.is_empty()).then(|| Value::Array(std::mem::take(&mut out.blocks)));
 }
 
 fn parse_line(line: &str, out: &mut Completion) -> Result<Vec<ChatEvent>> {
@@ -101,8 +185,45 @@ fn parse_line(line: &str, out: &mut Completion) -> Result<Vec<ChatEvent>> {
                 out.prompt_tokens = Some(n + cached);
             }
         }
+        Some("content_block_start") => {
+            let idx = v["index"].as_u64().unwrap_or(0) as usize;
+            let mut block = v["content_block"].clone();
+            if block["type"] == "tool_use" {
+                block["_partial"] = "".into();
+            }
+            while out.blocks.len() <= idx {
+                out.blocks.push(Value::Null);
+            }
+            out.blocks[idx] = block;
+        }
         Some("content_block_delta") => {
             let delta = &v["delta"];
+            let idx = v["index"].as_u64().unwrap_or(0) as usize;
+            if let Some(block) = out.blocks.get_mut(idx) {
+                let append = |b: &mut Value, key: &str, piece: &str| {
+                    let cur = b[key].as_str().unwrap_or("").to_owned();
+                    b[key] = format!("{cur}{piece}").into();
+                };
+                match delta["type"].as_str() {
+                    Some("text_delta") => {
+                        append(block, "text", delta["text"].as_str().unwrap_or(""))
+                    }
+                    Some("thinking_delta") => {
+                        append(block, "thinking", delta["thinking"].as_str().unwrap_or(""))
+                    }
+                    Some("signature_delta") => append(
+                        block,
+                        "signature",
+                        delta["signature"].as_str().unwrap_or(""),
+                    ),
+                    Some("input_json_delta") => append(
+                        block,
+                        "_partial",
+                        delta["partial_json"].as_str().unwrap_or(""),
+                    ),
+                    _ => {}
+                }
+            }
             let event = match delta.get("type").and_then(Value::as_str) {
                 Some("text_delta") => delta["text"]
                     .as_str()
@@ -172,6 +293,7 @@ pub(crate) async fn stream(
     }
     let mut out = Completion::default();
     read_sse(resp, cancel, &mut out, parse_line, on_event).await?;
+    finish(&mut out);
     Ok(out)
 }
 
@@ -215,14 +337,8 @@ mod tests {
 
     fn msgs() -> Vec<ChatMessage> {
         vec![
-            ChatMessage {
-                role: "system".into(),
-                content: "Tu es Claudio.".into(),
-            },
-            ChatMessage {
-                role: "user".into(),
-                content: "Bonjour".into(),
-            },
+            ChatMessage::text("system", "Tu es Claudio."),
+            ChatMessage::text("user", "Bonjour"),
         ]
     }
 
@@ -276,6 +392,56 @@ mod tests {
         parse_line(r#"data: {"type":"message_delta","delta":{"stop_reason":"refusal"},"usage":{"output_tokens":0}}"#, &mut c).unwrap();
         assert!(c.refused);
         assert!(parse_line(r#"data: {"type":"error","error":{"type":"overloaded_error","message":"Overloaded"}}"#, &mut c).is_err());
+    }
+
+    #[test]
+    fn tool_use_round_trip() {
+        let mut c = Completion::default();
+        let lines = [
+            r#"data: {"type":"content_block_start","index":0,"content_block":{"type":"thinking","thinking":"","signature":""}}"#,
+            r#"data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"Je lis."}}"#,
+            r#"data: {"type":"content_block_delta","index":0,"delta":{"type":"signature_delta","signature":"sig=="}}"#,
+            r#"data: {"type":"content_block_start","index":1,"content_block":{"type":"tool_use","id":"tu_1","name":"read_file","input":{}}}"#,
+            r#"data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"{\"path\": \"C:/a"}}"#,
+            r#"data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":".txt\"}"}}"#,
+        ];
+        for l in lines {
+            for e in parse_line(l, &mut c).unwrap() {
+                c.push(&e);
+            }
+        }
+        finish(&mut c);
+        assert_eq!(c.tool_calls.len(), 1);
+        assert_eq!(c.tool_calls[0].id, "tu_1");
+        assert_eq!(c.tool_calls[0].arguments, r#"{"path": "C:/a.txt"}"#);
+        let raw = c.raw.clone().unwrap();
+        assert_eq!(raw[0]["signature"], "sig==");
+        assert_eq!(raw[1]["input"]["path"], "C:/a.txt");
+        assert!(raw[1].get("_partial").is_none());
+
+        // Tour suivant : blocs natifs renvoyés tels quels, résultats regroupés.
+        let msgs = vec![
+            ChatMessage::text("user", "Lis a.txt et b.txt"),
+            ChatMessage::assistant(String::new(), c.tool_calls.clone(), c.raw.clone()),
+            ChatMessage::tool_result("tu_1", "contenu a".into(), false),
+            ChatMessage::tool_result("tu_2", "introuvable".into(), true),
+        ];
+        let opts = Options {
+            tools: vec![crate::chat::ToolDef {
+                name: "read_file".into(),
+                description: "Lit".into(),
+                parameters: json!({"type": "object"}),
+            }],
+            ..Default::default()
+        };
+        let b = request_body(&ep("claude-opus-5-5"), &msgs, &opts);
+        let turns = b["messages"].as_array().unwrap();
+        assert_eq!(turns.len(), 3);
+        assert_eq!(turns[1]["content"][0]["type"], "thinking");
+        assert_eq!(turns[2]["content"].as_array().unwrap().len(), 2);
+        assert_eq!(turns[2]["content"][1]["is_error"], true);
+        assert_eq!(b["tools"][0]["input_schema"]["type"], "object");
+        assert_eq!(b["tools"][0]["eager_input_streaming"], true);
     }
 
     #[test]

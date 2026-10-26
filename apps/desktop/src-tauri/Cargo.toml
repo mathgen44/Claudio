@@ -28,4 +28,5 @@ anyhow = "1.0.104"
 tracing = "0.1.44"
 tokio = { version = "1.54.1", features = ["rt"] }
 tauri-plugin-single-instance = "2.5.4"
+tauri-plugin-dialog = "2.8.3"
 

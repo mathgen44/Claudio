@@ -39,6 +39,7 @@ impl AppPaths {
             &self.logs_dir(),
             &self.default_models_dir(),
             &self.runtimes_dir(),
+            &self.workspace_dir(),
         ] {
             std::fs::create_dir_all(dir)
                 .with_context(|| format!("création de {}", dir.display()))?;
@@ -64,5 +65,10 @@ impl AppPaths {
 
     pub fn runtimes_dir(&self) -> PathBuf {
         self.data_dir.join("runtimes")
+    }
+
+    /// Espace de travail des outils : toujours accessible, inscriptible par le bac à sable.
+    pub fn workspace_dir(&self) -> PathBuf {
+        self.data_dir.join("workspace")
     }
 }

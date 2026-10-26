@@ -29,6 +29,76 @@ pub struct Config {
     pub providers: Vec<ProviderConfig>,
     pub routing: Routing,
     pub budget: Budget,
+    /// Règles d'accès des outils aux ressources de la machine.
+    pub permissions: Permissions,
+    /// Serveurs MCP (outils externes).
+    pub mcp_servers: Vec<McpServerConfig>,
+    /// Laisser l'assistant utiliser des outils (fichiers, web, commandes, MCP).
+    pub tools_enabled: bool,
+}
+
+/// Que faire quand un outil demande une ressource non encore autorisée.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Policy {
+    /// Demander à l'utilisateur.
+    #[default]
+    Ask,
+    /// Autoriser sans demander.
+    Allow,
+    /// Toujours refuser.
+    Deny,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct Permissions {
+    /// Accès aux sites web (par domaine).
+    pub network: Policy,
+    /// Commandes PowerShell : `Ask` (chaque commande) ou `Deny`.
+    pub shell: Policy,
+    /// Exécuter les commandes dans le bac à sable (intégrité basse : écriture limitée
+    /// à l'espace de travail de Claudio).
+    pub shell_sandbox: bool,
+    /// Appels d'outils MCP non encore autorisés.
+    pub mcp: Policy,
+    /// Autoriser les adresses du réseau local (routeur, NAS…) pour le web.
+    pub allow_private_network: bool,
+}
+
+impl Default for Permissions {
+    fn default() -> Self {
+        Self {
+            network: Policy::Ask,
+            shell: Policy::Ask,
+            shell_sandbox: true,
+            mcp: Policy::Ask,
+            allow_private_network: false,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "lowercase")]
+pub enum McpTransport {
+    /// Programme local lancé par Claudio, dialogue sur l'entrée/sortie standard.
+    Stdio {
+        command: String,
+        #[serde(default)]
+        args: Vec<String>,
+        #[serde(default)]
+        env: Vec<(String, String)>,
+    },
+    /// Serveur distant (« Streamable HTTP »).
+    Http { url: String },
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct McpServerConfig {
+    pub id: String,
+    pub name: String,
+    pub transport: McpTransport,
+    pub enabled: bool,
 }
 
 /// Famille d'API d'un fournisseur distant.
@@ -138,6 +208,9 @@ impl Default for Config {
             providers: Vec::new(),
             routing: Routing::default(),
             budget: Budget::default(),
+            permissions: Permissions::default(),
+            mcp_servers: Vec::new(),
+            tools_enabled: true,
         }
     }
 }

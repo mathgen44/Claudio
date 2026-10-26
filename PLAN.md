@@ -289,8 +289,21 @@ Mesuré sur la machine de développement (RTX 5070 Ti) : ~440 jetons/s avec Qwen
 - Comptabilité : table `usage`, coût par message, consommation du mois par modèle, dépense sur 30 jours, plafonds journalier et mensuel (blocage à 100 %, alerte à 80 %).
 - Le raisonnement et la décision du routeur sont conservés dans l'historique.
 
+### Phase 3 — livrée (2026-10-26)
+
+- `claudio-perms` : moteur de permissions (refus par défaut ; dossiers lecture ou lecture/écriture, sites, outils MCP ; une fois / conversation / toujours), chemins canonisés (`..`, liens et jonctions résolus), emplacements protégés (données de Claudio, `.ssh`, profils de navigateurs, Windows en lecture seule), suppression et commandes toujours confirmées, remplacement confirmé avec sauvegarde.
+- Bac à sable PowerShell : jeton d'intégrité basse (écriture limitée à l'espace de travail étiqueté « bas »), job Windows (arrêt de l'arborescence, 2 Go, 32 processus, délai), seuls les tuyaux de sortie hérités, variables secrètes retirées. Limite assumée : la lecture et le réseau restent possibles.
+- `claudio-tools` : fichiers (lister, lire par tranches, chercher, écrire, créer, déplacer, corbeille Windows), web (page en texte, recherche DuckDuckGo, redirections ré-autorisées, réseau local refusé), PowerShell, client MCP (stdio et Streamable HTTP : initialisation, outils, appels).
+- Appels d'outils dans les flux OpenAI et Anthropic (blocs de réflexion signés renvoyés tels quels, résultats regroupés, `eager_input_streaming`).
+- Boucle d'agent (16 étapes max) : demande d'autorisation transmise à l'interface et attendue, résultats marqués « données non fiables », traces d'outils dans l'historique, consignes système listant les dossiers accessibles.
+- Journal d'audit en ajout seul (déclencheurs SQL) et chaîné (SHA-256), vérifiable.
+- Interface : fenêtre d'autorisation (refus par défaut au clavier), cartes d'outils, pages « Outils et accès » et « Journal d'activité ».
+- Testé en réel : Gemma 4 12B local crée un fichier puis liste l'espace de travail par appels d'outils.
+
 ### Reporté
 
+- Lecture des PDF et documents Office (avec la phase 5, RAG).
+- Isolement réseau des commandes (nécessiterait AppContainer ou une règle de pare-feu).
 - Gestion de plusieurs modèles locaux chargés en même temps (LRU sur la mémoire vidéo) : utile surtout avec les agents parallèles, prévue avec la phase 4.
 - Téléchargements segmentés en parallèle.
 - Icône de zone de notification, raccourci global.

@@ -46,14 +46,8 @@ async fn fake_server(sse: &'static str) -> (String, tokio::task::JoinHandle<(Str
 
 fn messages() -> Vec<ChatMessage> {
     vec![
-        ChatMessage {
-            role: "system".into(),
-            content: "Tu es Claudio.".into(),
-        },
-        ChatMessage {
-            role: "user".into(),
-            content: "Salut".into(),
-        },
+        ChatMessage::text("system", "Tu es Claudio."),
+        ChatMessage::text("user", "Salut"),
     ]
 }
 

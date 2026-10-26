@@ -4,7 +4,21 @@ import { Brain, ChevronRight, Cloud, Cpu, MessageSquarePlus, Pencil, Send, Squar
 import { useCallback, useEffect, useRef, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
-import { activeLabel, api, formatUsd, routingLabels, type Config, type Message, type RoutingMode, type Session, type StreamEvent } from "../api";
+import {
+  activeLabel,
+  api,
+  formatUsd,
+  routingLabels,
+  type ApprovalRequest,
+  type Config,
+  type Message,
+  type RoutingMode,
+  type Session,
+  type StreamEvent,
+  type ToolTrace,
+} from "../api";
+import { ApprovalDialog } from "../components/ApprovalDialog";
+import { ToolCard, type ToolStep } from "../components/ToolCard";
 import { useStore } from "../store";
 import { Button, ErrorNote, Spinner } from "../ui";
 
@@ -15,6 +29,49 @@ interface Pending {
   reasoning: string;
   content: string;
   route?: Route;
+  tools: ToolStep[];
+}
+
+function applyEvent(p: Pending, e: StreamEvent): Pending {
+  switch (e.type) {
+    // Un nouvel itinéraire (repli) repart de zéro.
+    case "route":
+      return { ...p, route: e, content: "", reasoning: "", tools: [] };
+    case "token":
+      return { ...p, content: p.content + e.text };
+    case "reasoning":
+      return { ...p, reasoning: p.reasoning + e.text };
+    case "tool_call":
+      // Le texte qui précède un appel d'outil reste affiché, puis la suite continue en dessous.
+      return { ...p, tools: [...p.tools, { id: e.id, name: e.name, arguments: e.arguments }] };
+    case "tool_result":
+      return {
+        ...p,
+        tools: p.tools.map((t) => (t.id === e.id && t.result == null ? { ...t, result: e.content, is_error: e.is_error } : t)),
+      };
+    case "approval":
+      return p;
+  }
+}
+
+/** Regroupe l'historique : les traces d'outils sont rattachées à la réponse qui suit. */
+function groupHistory(messages: Message[]): { message: Message; tools: ToolStep[] }[] {
+  const out: { message: Message; tools: ToolStep[] }[] = [];
+  let tools: ToolStep[] = [];
+  for (const m of messages) {
+    if (m.role === "tool") {
+      try {
+        const t = JSON.parse(m.content) as ToolTrace;
+        tools.push({ id: String(m.id), name: t.name, arguments: t.arguments, result: t.result, is_error: t.is_error });
+      } catch {
+        /* trace illisible : ignorée */
+      }
+      continue;
+    }
+    out.push({ message: m, tools: m.role === "assistant" ? tools : [] });
+    if (m.role === "assistant") tools = [];
+  }
+  return out;
 }
 
 export function Chat({ onOpenModels }: { onOpenModels: () => void }) {
@@ -28,6 +85,7 @@ export function Chat({ onOpenModels }: { onOpenModels: () => void }) {
   const [error, setError] = useState<string | null>(null);
   const [loadingModel, setLoadingModel] = useState(false);
   const [config, setConfig] = useState<Config | null>(null);
+  const [approvals, setApprovals] = useState<ApprovalRequest[]>([]);
   const bottom = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -44,9 +102,13 @@ export function Chat({ onOpenModels }: { onOpenModels: () => void }) {
     loadSessions().then((l) => l[0] && setCurrent((c) => c ?? l[0].id));
   }, [loadSessions]);
 
+  // Conversation créée à l'instant par un envoi : son historique arrivera à la fin
+  // de la réponse (le charger maintenant afficherait le message en double).
+  const freshSession = useRef<string | null>(null);
   useEffect(() => {
-    if (current) api.messages(current).then(setMessages);
+    if (current && current !== freshSession.current) api.messages(current).then(setMessages);
     else setMessages([]);
+    freshSession.current = null;
   }, [current]);
 
   useEffect(() => {
@@ -68,9 +130,10 @@ export function Chat({ onOpenModels }: { onOpenModels: () => void }) {
       });
   }, [JSON.stringify(active), config?.routing.mode]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const newSession = async () => {
+  const newSession = async (fresh = false) => {
     const s = await api.createSession();
     await loadSessions();
+    if (fresh) freshSession.current = s.id;
     setCurrent(s.id);
     return s.id;
   };
@@ -80,21 +143,21 @@ export function Chat({ onOpenModels }: { onOpenModels: () => void }) {
     if (!text || pending) return;
     setError(null);
     setInput("");
-    const sid = current ?? (await newSession());
-    setPending({ user: text, reasoning: "", content: "" });
+    const sid = current ?? (await newSession(true));
+    setPending({ user: text, reasoning: "", content: "", tools: [] });
     try {
-      const reply = await api.sendMessage(sid, text, (e) =>
-        setPending((p) => {
-          if (!p) return p;
-          // Un nouvel itinéraire (repli) repart de zéro.
-          if (e.type === "route") return { ...p, route: e, content: "", reasoning: "" };
-          return e.type === "token" ? { ...p, content: p.content + e.text } : { ...p, reasoning: p.reasoning + e.text };
-        }),
-      );
+      const reply = await api.sendMessage(sid, text, (e) => {
+        if (e.type === "approval") {
+          const { type: _, ...req } = e;
+          setApprovals((a) => [...a, req]);
+        }
+        setPending((p) => p && applyEvent(p, e));
+      });
       setLastSpeed(reply.tokens_per_sec);
     } catch (e) {
       setError(String(e));
     } finally {
+      setApprovals([]);
       setPending(null);
       setMessages(await api.messages(sid));
       loadSessions();
@@ -128,7 +191,7 @@ export function Chat({ onOpenModels }: { onOpenModels: () => void }) {
     <div className="flex h-full min-h-0">
       <aside className="flex w-64 shrink-0 flex-col border-r border-[var(--border)] bg-[var(--panel)]">
         <div className="p-3">
-          <Button className="w-full" onClick={newSession}>
+          <Button className="w-full" onClick={() => newSession()}>
             <MessageSquarePlus size={16} /> Nouvelle conversation
           </Button>
         </div>
@@ -207,18 +270,36 @@ export function Chat({ onOpenModels }: { onOpenModels: () => void }) {
                 )}
               </div>
             )}
-            {messages.map((m) => (
-              <Bubble key={m.id} role={m.role} content={m.content} reasoning={m.reasoning ?? undefined} meta={m} />
+            {groupHistory(messages).map(({ message: m, tools }) => (
+              <div key={m.id} className="space-y-2">
+                {tools.map((t) => (
+                  <ToolCard key={t.id} step={t} />
+                ))}
+                <Bubble role={m.role} content={m.content} reasoning={m.reasoning ?? undefined} meta={m} />
+              </div>
             ))}
             {pending && (
               <>
                 <Bubble role="user" content={pending.user} />
                 {pending.route && <RouteBadge route={pending.route} />}
+                {pending.tools.map((t) => (
+                  <ToolCard key={t.id} step={t} />
+                ))}
                 <Bubble role="assistant" content={pending.content} reasoning={pending.reasoning} streaming />
               </>
             )}
             <ErrorNote message={error} />
             <div ref={bottom} />
+            {approvals[0] && (
+              <ApprovalDialog
+                request={approvals[0]}
+                onAnswer={(a) => {
+                  const req = approvals[0];
+                  setApprovals((list) => list.slice(1));
+                  api.answerApproval(req.id, a).catch((e) => setError(String(e)));
+                }}
+              />
+            )}
           </div>
         </div>
 

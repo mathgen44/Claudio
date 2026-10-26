@@ -2,6 +2,7 @@
 // une implémentation simulée prend le relais.
 
 import { Channel, invoke } from "@tauri-apps/api/core";
+import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import { mockInvoke } from "./mock";
 
 export type GpuVendor = "nvidia" | "amd" | "intel" | "other";
@@ -113,6 +114,79 @@ export interface Config {
   providers: ProviderConfig[];
   routing: { mode: RoutingMode; cloud: CloudModel | null };
   budget: Budget;
+  permissions: Permissions;
+  mcp_servers: McpServer[];
+  tools_enabled: boolean;
+}
+
+export type Policy = "ask" | "allow" | "deny";
+
+export interface Permissions {
+  network: Policy;
+  shell: Policy;
+  shell_sandbox: boolean;
+  mcp: Policy;
+  allow_private_network: boolean;
+}
+
+export type McpTransport =
+  | { type: "stdio"; command: string; args: string[]; env: [string, string][] }
+  | { type: "http"; url: string };
+
+export interface McpServer {
+  id: string;
+  name: string;
+  transport: McpTransport;
+  enabled: boolean;
+}
+
+export interface McpTool {
+  name: string;
+  description: string;
+}
+
+export interface Grant {
+  id: number;
+  kind: "folder" | "host" | "mcp";
+  target: string;
+  write: boolean;
+  created_at: string;
+}
+
+export interface AccessOverview {
+  workspace: string;
+  grants: Grant[];
+  permissions: Permissions;
+  tools_enabled: boolean;
+  mcp_servers: McpServer[];
+}
+
+export interface AuditEntry {
+  id: number;
+  at: string;
+  session_id: string | null;
+  tool: string;
+  detail: string;
+  decision: string;
+  outcome: string;
+}
+
+export type Answer = "deny" | "once" | "session" | "always";
+
+export interface ApprovalRequest {
+  id: string;
+  tool: string;
+  title: string;
+  detail: string;
+  options: Answer[];
+  dangerous: boolean;
+}
+
+export interface ToolTrace {
+  name: string;
+  arguments: string;
+  result: string;
+  is_error: boolean;
 }
 
 export type ProviderKind = "anthropic" | "openai" | "mistral" | "gemini" | "openrouter" | "custom";
@@ -229,7 +303,7 @@ export interface Session {
   updated_at: string;
 }
 
-export type Role = "system" | "user" | "assistant";
+export type Role = "system" | "user" | "assistant" | "tool";
 
 export interface Message {
   id: number;
@@ -248,7 +322,10 @@ export interface Message {
 export type StreamEvent =
   | { type: "route"; target: "local" | "cloud"; model: string; reason: string }
   | { type: "token"; text: string }
-  | { type: "reasoning"; text: string };
+  | { type: "reasoning"; text: string }
+  | { type: "tool_call"; id: string; name: string; arguments: string }
+  | ({ type: "approval" } & ApprovalRequest)
+  | { type: "tool_result"; id: string; name: string; content: string; is_error: boolean };
 
 export interface Reply {
   message: Message;
@@ -285,7 +362,7 @@ export const api = {
   config: () => call<Config>("get_config"),
   updateSettings: (patch: SettingsPatch) => call<Config>("update_settings", { patch }),
   setHfToken: (token: string | null) => call<void>("set_hf_token", { token }),
-  openFolder: (which: "logs" | "models" | "data") => call<void>("open_folder", { which }),
+  openFolder: (which: "logs" | "models" | "data" | "workspace") => call<void>("open_folder", { which }),
   sessions: () => call<Session[]>("list_sessions"),
   createSession: () => call<Session>("create_session"),
   renameSession: (id: string, title: string) => call<void>("rename_session", { id, title }),
@@ -318,7 +395,47 @@ export const api = {
   setBudget: (budget: Budget) => call<void>("set_budget", { budget }),
   budgetStatus: () => call<BudgetStatus>("budget_status"),
   usageReport: () => call<UsageReport>("usage_report"),
+
+  answerApproval: (id: string, answer: Answer) => call<void>("answer_approval", { id, answer }),
+  accessOverview: () => call<AccessOverview>("access_overview"),
+  grantFolder: (path: string, write: boolean) => call<void>("grant_folder", { path, write }),
+  revokeGrant: (id: number) => call<void>("revoke_grant", { id }),
+  setPermissions: (permissions: Permissions) => call<void>("set_permissions", { permissions }),
+  setToolsEnabled: (enabled: boolean) => call<void>("set_tools_enabled", { enabled }),
+  auditLog: (limit: number, before: number | null) => call<AuditEntry[]>("audit_log", { limit, before }),
+  verifyAudit: () => call<number | null>("verify_audit"),
+  addMcpServer: (name: string, transport: McpTransport) => call<McpServer>("add_mcp_server", { name, transport }),
+  setMcpEnabled: (id: string, enabled: boolean) => call<void>("set_mcp_enabled", { id, enabled }),
+  removeMcpServer: (id: string) => call<void>("remove_mcp_server", { id }),
+  testMcpServer: (id: string) => call<McpTool[]>("test_mcp_server", { id }),
+  /** Sélecteur de dossier natif (saisie manuelle en mode simulé). */
+  pickFolder: async (): Promise<string | null> => {
+    if (!inTauri) return window.prompt("Chemin du dossier", "C:\\Users\\vous\\Documents");
+    const r = await openDialog({ directory: true, multiple: false, title: "Choisir un dossier pour Claudio" });
+    return typeof r === "string" ? r : null;
+  },
 };
+
+/** Noms lisibles des outils. */
+export function toolLabel(name: string): string {
+  const labels: Record<string, string> = {
+    list_directory: "Contenu du dossier",
+    read_file: "Lecture de fichier",
+    search_files: "Recherche de fichiers",
+    write_file: "Écriture de fichier",
+    create_directory: "Création de dossier",
+    move_path: "Déplacement",
+    delete_path: "Mise à la corbeille",
+    web_fetch: "Page web",
+    web_search: "Recherche web",
+    run_powershell: "PowerShell",
+  };
+  if (name.startsWith("mcp__")) {
+    const [, server, tool] = name.split("__");
+    return `MCP ${server} · ${tool}`;
+  }
+  return labels[name] ?? name;
+}
 
 export const routingLabels: Record<RoutingMode, string> = {
   local: "Local uniquement",

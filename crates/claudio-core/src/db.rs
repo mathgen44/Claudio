@@ -47,6 +47,31 @@ const MIGRATIONS: &[&str] = &[
     );
     CREATE INDEX usage_at ON usage(at);
 "#,
+    r#"
+    CREATE TABLE grants (
+        id          INTEGER PRIMARY KEY AUTOINCREMENT,
+        kind        TEXT NOT NULL,
+        target      TEXT NOT NULL,
+        write       INTEGER NOT NULL DEFAULT 0,
+        created_at  TEXT NOT NULL,
+        UNIQUE(kind, target)
+    );
+    CREATE TABLE audit (
+        id          INTEGER PRIMARY KEY AUTOINCREMENT,
+        at          TEXT NOT NULL,
+        session_id  TEXT,
+        tool        TEXT NOT NULL,
+        detail      TEXT NOT NULL,
+        decision    TEXT NOT NULL,
+        outcome     TEXT NOT NULL,
+        prev_hash   TEXT NOT NULL,
+        hash        TEXT NOT NULL
+    );
+    CREATE TRIGGER audit_no_update BEFORE UPDATE ON audit
+        BEGIN SELECT RAISE(ABORT, 'journal en ajout seul'); END;
+    CREATE TRIGGER audit_no_delete BEFORE DELETE ON audit
+        BEGIN SELECT RAISE(ABORT, 'journal en ajout seul'); END;
+"#,
 ];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -55,6 +80,8 @@ pub enum Role {
     System,
     User,
     Assistant,
+    /// Trace d'un appel d'outil (affichée, jamais renvoyée au modèle).
+    Tool,
 }
 
 impl Role {
@@ -63,6 +90,7 @@ impl Role {
             Role::System => "system",
             Role::User => "user",
             Role::Assistant => "assistant",
+            Role::Tool => "tool",
         }
     }
 
@@ -71,6 +99,7 @@ impl Role {
             "system" => Role::System,
             "user" => Role::User,
             "assistant" => Role::Assistant,
+            "tool" => Role::Tool,
             other => bail!("rôle inconnu : {other}"),
         })
     }

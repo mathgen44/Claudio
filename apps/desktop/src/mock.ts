@@ -2,7 +2,10 @@
 // navigateur sans le cœur Rust (`npm run dev`). Jamais utilisée dans l'application.
 
 import type {
+  AccessOverview,
   ActiveModel,
+  Answer,
+  AuditEntry,
   Config,
   HfRepo,
   ProviderView,
@@ -20,19 +23,38 @@ import type {
 const GB = 1024 ** 3;
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
+/** `?ready` : machine déjà configurée (mise en route faite, un modèle installé). */
+const READY = new URLSearchParams(location.search).has("ready");
+
 const config: Config = {
   models_dir: null,
-  active_model: null,
+  active_model: READY ? { source: "local", id: "gemma-4-12b:Q6_K" } : null,
   context_size: null,
   use_ollama: true,
   llama_backend: null,
   thinking: null,
   system_prompt: "Tu es Claudio, un assistant personnel qui fonctionne sur l'ordinateur de l'utilisateur.",
-  onboarding_done: new URLSearchParams(location.search).has("ready"),
+  onboarding_done: READY,
   providers: [],
   routing: { mode: "auto", cloud: null },
   budget: { daily_usd: 2, monthly_usd: 20 },
+  permissions: { network: "ask", shell: "ask", shell_sandbox: true, mcp: "ask", allow_private_network: false },
+  mcp_servers: [],
+  tools_enabled: true,
 };
+
+const access: AccessOverview = {
+  workspace: "C:\\Users\\vous\\AppData\\Local\\Claudio\\workspace",
+  grants: [{ id: 1, kind: "folder", target: "D:\\Documents\\Factures", write: false, created_at: "" }],
+  permissions: config.permissions,
+  tools_enabled: true,
+  mcp_servers: [],
+};
+const audit: AuditEntry[] = [];
+const pendingApprovals = new Map<string, (a: Answer) => void>();
+let approvalSeq = 0;
+const logAudit = (tool: string, detail: string, decision: string, outcome = "ok") =>
+  audit.unshift({ id: audit.length + 1, at: new Date().toISOString(), session_id: null, tool, detail, decision, outcome });
 
 const providers: ProviderView[] = [];
 const usage: UsageRow[] = [
@@ -85,7 +107,9 @@ const recos: Recommendation[] = [
   license: "apache-2.0",
 }));
 
-const installed: InstalledModel[] = [];
+const installed: InstalledModel[] = READY
+  ? [{ key: "gemma-4-12b:Q6_K", model_id: "gemma-4-12b", name: "Gemma 4 12B", quant: "Q6_K", repo: "unsloth/gemma-4-12b-it-GGUF", file: "…", size: 9.8e9, sha256: null, installed_at: "" }]
+  : [];
 let runtime: Status["runtime"] = null;
 const sessions: Session[] = [];
 const messages: Message[] = [];
@@ -236,6 +260,24 @@ export async function mockInvoke<T>(cmd: string, args: Record<string, any> = {})
       const route = cloud ? "mode cloud" : "modèle local";
       const model = cloud ? config.routing.cloud!.model : "gemma-4-12b:Q6_K";
       on({ type: "route", target: cloud ? "cloud" : "local", model, reason: route });
+      // Démonstration d'un appel d'outil avec demande d'autorisation.
+      const dir = "D:\\Documents\\Projets";
+      const toolArgs = JSON.stringify({ path: dir });
+      on({ type: "tool_call", id: "call_1", name: "list_directory", arguments: toolArgs });
+      const id = `ap-${++approvalSeq}`;
+      const decision = await new Promise<Answer>((resolve) => {
+        pendingApprovals.set(id, resolve);
+        on({ type: "approval", id, tool: "list_directory", title: "Lire des fichiers", detail: dir, options: ["once", "session", "always"], dangerous: false });
+      });
+      const ok = decision !== "deny";
+      const result = ok ? "[dossier] Claudio\\\n[dossier] Site web\\\nnotes.md  2 Ko  2026-10-20 18:02" : "refusé par l'utilisateur";
+      logAudit("list_directory", dir, ok ? `approuvé (${decision})` : "refusé : refusé par l'utilisateur", ok ? "ok" : result);
+      on({ type: "tool_result", id: "call_1", name: "list_directory", content: result, is_error: !ok });
+      messages.push({
+        id: nextId++, session_id: s.id, role: "tool",
+        content: JSON.stringify({ name: "list_directory", arguments: toolArgs, result, is_error: !ok }),
+        model: null, tokens: null, duration_ms: null, reasoning: null, route: null, cost_usd: null, created_at: now(),
+      });
       if (s.title === "Nouvelle conversation") s.title = String(args.text).slice(0, 48);
       const answer =
         "Bonjour ! Je suis **Claudio**, ton assistant local.\n\nJe tourne entièrement sur ta machine :\n\n- modèle chargé sur la carte graphique\n- aucune donnée envoyée sur Internet\n\n```powershell\nGet-Process llama-server\n```";
@@ -266,6 +308,45 @@ export async function mockInvoke<T>(cmd: string, args: Record<string, any> = {})
       s.updated_at = now();
       return r({ message: msg, tokens_per_sec: 88.4, cancelled: false });
     }
+    case "answer_approval":
+      pendingApprovals.get(args.id)?.(args.answer);
+      pendingApprovals.delete(args.id);
+      return r(undefined);
+    case "access_overview":
+      return r({ ...access, permissions: config.permissions, tools_enabled: config.tools_enabled, mcp_servers: config.mcp_servers });
+    case "grant_folder":
+      access.grants.push({ id: Date.now(), kind: "folder", target: args.path, write: args.write, created_at: "" });
+      return r(undefined);
+    case "revoke_grant":
+      access.grants = access.grants.filter((g) => g.id !== args.id);
+      return r(undefined);
+    case "set_permissions":
+      config.permissions = args.permissions;
+      return r(undefined);
+    case "set_tools_enabled":
+      config.tools_enabled = args.enabled;
+      return r(undefined);
+    case "audit_log":
+      return r(audit.filter((e) => args.before == null || e.id < args.before).slice(0, args.limit));
+    case "verify_audit":
+      return r(null);
+    case "add_mcp_server": {
+      const srv = { id: `mcp${config.mcp_servers.length + 1}`, name: args.name || "Serveur MCP", transport: args.transport, enabled: true };
+      config.mcp_servers.push(srv);
+      return r(srv);
+    }
+    case "set_mcp_enabled":
+      config.mcp_servers.find((m) => m.id === args.id)!.enabled = args.enabled;
+      return r(undefined);
+    case "remove_mcp_server":
+      config.mcp_servers = config.mcp_servers.filter((m) => m.id !== args.id);
+      return r(undefined);
+    case "test_mcp_server":
+      await sleep(500);
+      return r([
+        { name: "search_repositories", description: "Cherche des dépôts" },
+        { name: "create_issue", description: "Crée un ticket" },
+      ]);
     case "set_session_route":
       sessions.find((s) => s.id === args.sessionId)!.route = args.mode;
       return r(undefined);

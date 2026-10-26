@@ -2,6 +2,7 @@
 //! conversations. L'application de bureau et l'outil en ligne de commande
 //! n'en sont que des façades.
 
+mod access;
 mod cloud;
 mod conversation;
 mod hub;
@@ -24,12 +25,15 @@ use claudio_models::{
 };
 use serde::Serialize;
 
+pub use access::AccessOverview;
 pub use claudio_core;
 pub use claudio_hw;
 pub use claudio_llm;
 pub use claudio_models;
+pub use claudio_perms;
+pub use claudio_tools;
 pub use cloud::{BudgetStatus, ProviderView, UsageReport};
-pub use conversation::{Reply, StreamEvent};
+pub use conversation::{Reply, StreamEvent, ToolTrace};
 pub use hub::{RepoView, VariantView};
 
 pub const DEFAULT_SESSION_TITLE: &str = "Nouvelle conversation";
@@ -44,6 +48,13 @@ pub struct Claudio {
     engine: LocalEngine,
     downloads: Mutex<HashMap<String, CancelToken>>,
     pub(crate) chats: Mutex<HashMap<String, CancelToken>>,
+    /// Moteur de permissions des outils.
+    pub perms: claudio_perms::Engine,
+    pub(crate) toolbox: claudio_tools::Toolbox,
+    /// Demandes d'autorisation en attente de réponse de l'utilisateur.
+    pub(crate) approvals:
+        Mutex<HashMap<String, tokio::sync::oneshot::Sender<claudio_perms::Answer>>>,
+    pub(crate) approval_seq: std::sync::atomic::AtomicU64,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -76,7 +87,23 @@ impl Claudio {
         paths.ensure()?;
         let config = Config::load(&paths.config_file())?;
         let db = Database::open(&paths.database_file())?;
+        let workspace = paths.workspace_dir();
+        if let Err(e) = claudio_perms::sandbox::label_low_integrity(&workspace) {
+            tracing::warn!("espace de travail : {e:#}");
+        }
+        let protected =
+            claudio_perms::Protected::defaults(&[paths.config_dir.clone(), paths.data_dir.clone()]);
+        let perms = claudio_perms::Engine::new(
+            db.clone(),
+            config.permissions.clone(),
+            protected,
+            workspace,
+        );
         Ok(Arc::new(Self {
+            perms,
+            toolbox: claudio_tools::Toolbox::new(Arc::default()),
+            approvals: Mutex::default(),
+            approval_seq: Default::default(),
             config: RwLock::new(config),
             db,
             http: claudio_models::download::client(),

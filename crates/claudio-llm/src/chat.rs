@@ -12,10 +12,70 @@ use claudio_models::CancelToken;
 
 use crate::anthropic;
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+/// Message d'une conversation, y compris les appels d'outils et leurs résultats.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct ChatMessage {
+    /// `system`, `user`, `assistant` ou `tool` (résultat d'outil).
     pub role: String,
     pub content: String,
+    /// Outils demandés par le modèle (rôle `assistant`).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub tool_calls: Vec<ToolCall>,
+    /// Appel auquel répond ce résultat (rôle `tool`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tool_call_id: Option<String>,
+    #[serde(default)]
+    pub is_error: bool,
+    /// Blocs natifs du fournisseur (Anthropic : réflexion signée), renvoyés tels quels.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub raw: Option<Value>,
+}
+
+impl ChatMessage {
+    pub fn text(role: &str, content: impl Into<String>) -> Self {
+        Self {
+            role: role.to_owned(),
+            content: content.into(),
+            ..Default::default()
+        }
+    }
+
+    pub fn assistant(content: String, tool_calls: Vec<ToolCall>, raw: Option<Value>) -> Self {
+        Self {
+            role: "assistant".into(),
+            content,
+            tool_calls,
+            raw,
+            ..Default::default()
+        }
+    }
+
+    pub fn tool_result(call_id: &str, content: String, is_error: bool) -> Self {
+        Self {
+            role: "tool".into(),
+            content,
+            tool_call_id: Some(call_id.to_owned()),
+            is_error,
+            ..Default::default()
+        }
+    }
+}
+
+/// Appel d'outil demandé par le modèle ; `arguments` est le JSON brut reçu.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct ToolCall {
+    pub id: String,
+    pub name: String,
+    pub arguments: String,
+}
+
+/// Outil proposé au modèle.
+#[derive(Debug, Clone, Serialize)]
+pub struct ToolDef {
+    pub name: String,
+    pub description: String,
+    /// Schéma JSON des paramètres.
+    pub parameters: Value,
 }
 
 /// Famille d'API d'un point d'accès.
@@ -51,6 +111,7 @@ pub struct Options {
     pub max_tokens: Option<u32>,
     /// Active ou coupe le raisonnement des modèles qui le proposent.
     pub thinking: Option<bool>,
+    pub tools: Vec<ToolDef>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
@@ -72,6 +133,13 @@ pub struct Completion {
     pub cancelled: bool,
     /// Le modèle a refusé de répondre (filtres de sécurité du fournisseur).
     pub refused: bool,
+    pub tool_calls: Vec<ToolCall>,
+    /// Contenu natif de la réponse (Anthropic), à renvoyer tel quel au tour suivant.
+    #[serde(skip)]
+    pub raw: Option<Value>,
+    /// Blocs en cours de construction (Anthropic).
+    #[serde(skip)]
+    pub(crate) blocks: Vec<Value>,
 }
 
 impl Completion {
@@ -114,6 +182,28 @@ fn parse_openai_line(line: &str, out: &mut Completion) -> Result<Vec<ChatEvent>>
                 } else {
                     ChatEvent::Token { text }
                 });
+            }
+        }
+        // Les appels d'outils arrivent en morceaux, repérés par leur index.
+        for tc in delta
+            .get("tool_calls")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+        {
+            let idx = tc.get("index").and_then(Value::as_u64).unwrap_or(0) as usize;
+            while out.tool_calls.len() <= idx {
+                out.tool_calls.push(ToolCall::default());
+            }
+            let call = &mut out.tool_calls[idx];
+            if let Some(id) = tc.get("id").and_then(Value::as_str) {
+                call.id = id.to_owned();
+            }
+            if let Some(n) = tc.pointer("/function/name").and_then(Value::as_str) {
+                call.name.push_str(n);
+            }
+            if let Some(a) = tc.pointer("/function/arguments").and_then(Value::as_str) {
+                call.arguments.push_str(a);
             }
         }
     }
@@ -224,9 +314,20 @@ pub async fn stream(
     }
     let mut body = serde_json::json!({
         "model": endpoint.model,
-        "messages": messages,
+        "messages": messages.iter().map(openai_message).collect::<Vec<_>>(),
         "stream": true,
     });
+    if !opts.tools.is_empty() {
+        body["tools"] = opts
+            .tools
+            .iter()
+            .map(|t| {
+                serde_json::json!({"type": "function", "function": {
+                    "name": t.name, "description": t.description, "parameters": t.parameters
+                }})
+            })
+            .collect();
+    }
     match endpoint.api {
         Api::Local => {
             body["stream_options"] = serde_json::json!({ "include_usage": true });
@@ -258,7 +359,33 @@ pub async fn stream(
     }
     let mut out = Completion::default();
     read_sse(resp, cancel, &mut out, parse_openai_line, &mut on_event).await?;
+    out.tool_calls.retain(|c| !c.name.is_empty());
+    for (i, c) in out.tool_calls.iter_mut().enumerate() {
+        if c.id.is_empty() {
+            c.id = format!("call_{i}");
+        }
+    }
     Ok(out)
+}
+
+fn openai_message(m: &ChatMessage) -> Value {
+    match m.role.as_str() {
+        "tool" => serde_json::json!({
+            "role": "tool",
+            "tool_call_id": m.tool_call_id,
+            "content": m.content,
+        }),
+        "assistant" if !m.tool_calls.is_empty() => serde_json::json!({
+            "role": "assistant",
+            "content": if m.content.is_empty() { Value::Null } else { m.content.clone().into() },
+            "tool_calls": m.tool_calls.iter().map(|c| serde_json::json!({
+                "id": c.id,
+                "type": "function",
+                "function": {"name": c.name, "arguments": c.arguments},
+            })).collect::<Vec<_>>(),
+        }),
+        _ => serde_json::json!({"role": m.role, "content": m.content}),
+    }
 }
 
 #[cfg(test)]
@@ -296,6 +423,35 @@ mod tests {
         assert_eq!(c.prompt_tokens, Some(20));
         assert_eq!(c.completion_tokens, Some(3));
         assert_eq!(c.tokens_per_sec, Some(91.5));
+    }
+
+    #[test]
+    fn accumulates_tool_calls() {
+        let mut c = Completion::default();
+        feed(
+            &mut c,
+            r#"data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"c1","function":{"name":"read_file","arguments":""}}]}}]}"#,
+        );
+        feed(
+            &mut c,
+            r#"data: {"choices":[{"delta":{"tool_calls":[{"index":0,"function":{"arguments":"{\"path\":"}}]}}]}"#,
+        );
+        feed(
+            &mut c,
+            r#"data: {"choices":[{"delta":{"tool_calls":[{"index":0,"function":{"arguments":"\"C:/a\"}"}}]}}]}"#,
+        );
+        assert_eq!(c.tool_calls.len(), 1);
+        assert_eq!(c.tool_calls[0].name, "read_file");
+        assert_eq!(c.tool_calls[0].arguments, r#"{"path":"C:/a"}"#);
+        let m = openai_message(&ChatMessage::assistant(
+            String::new(),
+            c.tool_calls.clone(),
+            None,
+        ));
+        assert_eq!(m["tool_calls"][0]["function"]["name"], "read_file");
+        assert!(m["content"].is_null());
+        let r = openai_message(&ChatMessage::tool_result("c1", "ok".into(), false));
+        assert_eq!(r["tool_call_id"], "c1");
     }
 
     #[test]

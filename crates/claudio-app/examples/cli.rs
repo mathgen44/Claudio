@@ -16,6 +16,7 @@ use std::io::Write;
 use anyhow::{Result, bail};
 use claudio_app::claudio_core::AppPaths;
 use claudio_app::claudio_llm::runtime::InstallEvent;
+use claudio_app::claudio_perms::Answer;
 use claudio_app::{Claudio, StreamEvent};
 
 fn mb(b: u64) -> f64 {
@@ -108,11 +109,18 @@ async fn main() -> Result<()> {
                 );
             }
         }
+        ["use", key] => {
+            app.set_active_model(claudio_app::claudio_core::config::ActiveModel::Local {
+                id: (*key).to_owned(),
+            })?;
+            println!("modèle actif : {key}");
+        }
         ["usage"] => println!("{}", serde_json::to_string_pretty(&app.usage_report()?)?),
         ["chat", text] => {
             let session = app.create_session()?;
+            let app2 = app.clone();
             let reply = app
-                .send_message(&session.id, text, |ev| {
+                .send_message(&session.id, text, move |ev| {
                     match ev {
                         StreamEvent::Route {
                             target,
@@ -121,6 +129,32 @@ async fn main() -> Result<()> {
                         } => println!("[{target:?} · {model} · {reason}]"),
                         StreamEvent::Token { text } => print!("{text}"),
                         StreamEvent::Reasoning { text } => print!("\x1b[2m{text}\x1b[0m"),
+                        StreamEvent::ToolCall {
+                            name, arguments, ..
+                        } => println!("\n[outil {name} {arguments}]"),
+                        StreamEvent::ToolResult {
+                            content, is_error, ..
+                        } => println!(
+                            "[{}] {}",
+                            if is_error { "échec" } else { "ok" },
+                            content.chars().take(300).collect::<String>()
+                        ),
+                        StreamEvent::Approval { id, approval, .. } => {
+                            print!(
+                                "\n{} : {}\n[o]ui une fois, [c]onversation, [t]oujours, [n]on ? ",
+                                approval.title, approval.detail
+                            );
+                            std::io::stdout().flush().ok();
+                            let mut line = String::new();
+                            std::io::stdin().read_line(&mut line).ok();
+                            let answer = match line.trim() {
+                                "o" => Answer::Once,
+                                "c" => Answer::Session,
+                                "t" => Answer::Always,
+                                _ => Answer::Deny,
+                            };
+                            app2.answer_approval(&id, answer).ok();
+                        }
                     }
                     std::io::stdout().flush().ok();
                 })
@@ -133,7 +167,7 @@ async fn main() -> Result<()> {
             );
         }
         _ => bail!(
-            "usage : cli status | recommend | runtime | install <id> <quant> | search <texte> | repo <dépôt> | usage | chat <texte>"
+            "usage : cli status | recommend | runtime | install <id> <quant> | search <texte> | repo <dépôt> | use <modèle> | usage | chat <texte>"
         ),
     }
     app.shutdown().await;
