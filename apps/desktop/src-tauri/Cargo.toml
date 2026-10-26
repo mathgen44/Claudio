@@ -32,4 +32,5 @@ tauri-plugin-dialog = "2.8.3"
 tauri-plugin-notification = "2.7.0"
 tauri-plugin-updater = "2.14.0"
 tauri-plugin-process = "2.4.0"
+tauri-plugin-autostart = "2.7.0"
 

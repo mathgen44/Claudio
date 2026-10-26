@@ -7,6 +7,19 @@ import { inTauri } from "./api";
 
 export type { Update };
 
+/** Démarrage avec Windows (clé « Exécuter » de l'utilisateur). */
+export async function autostartEnabled(): Promise<boolean> {
+  if (!inTauri) return false;
+  const { isEnabled } = await import("@tauri-apps/plugin-autostart");
+  return isEnabled();
+}
+
+export async function setAutostart(on: boolean) {
+  if (!inTauri) return;
+  const { enable, disable } = await import("@tauri-apps/plugin-autostart");
+  await (on ? enable() : disable());
+}
+
 /** Nouvelle version disponible, ou `null` (toujours `null` hors de l'application). */
 export async function findUpdate(): Promise<Update | null> {
   if (!inTauri) return null;

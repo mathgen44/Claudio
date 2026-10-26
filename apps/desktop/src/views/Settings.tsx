@@ -3,7 +3,7 @@
 import { RefreshCw } from "lucide-react";
 import { useEffect, useState } from "react";
 import { api, backendLabel, type Config, type SettingsPatch } from "../api";
-import { findUpdate, installUpdate } from "../updates";
+import { autostartEnabled, findUpdate, installUpdate, setAutostart } from "../updates";
 import { DownloadRow } from "../components/DownloadRow";
 import { MachineCard } from "../components/MachineCard";
 import { RUNTIME_KEY, useStore } from "../store";
@@ -18,6 +18,11 @@ export function Settings({ onRestartOnboarding }: { onRestartOnboarding: () => v
   const [token, setToken] = useState("");
   const [saved, setSaved] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [autostart, setAutostartState] = useState(false);
+
+  useEffect(() => {
+    autostartEnabled().then(setAutostartState).catch(() => {});
+  }, []);
 
   useEffect(() => {
     api.config().then((c) => {
@@ -193,6 +198,33 @@ export function Settings({ onRestartOnboarding }: { onRestartOnboarding: () => v
           </Button>
         </div>
         <MachineCard status={status} />
+      </Card>
+
+      <Card className="space-y-3">
+        <h2 className="font-medium">Démarrage</h2>
+        <label className="flex items-start gap-2">
+          <input
+            type="checkbox"
+            className="mt-1 accent-[var(--accent)]"
+            checked={autostart}
+            onChange={async (e) => {
+              const on = e.target.checked;
+              try {
+                await setAutostart(on);
+                setAutostartState(on);
+                setSaved(on ? "Claudio démarrera avec Windows" : "Démarrage automatique désactivé");
+              } catch (err) {
+                setError(String(err));
+              }
+            }}
+          />
+          <span>
+            Lancer Claudio à l'ouverture de session Windows
+            <span className="block text-sm text-[var(--muted)]">
+              Il démarre discrètement dans la zone de notification : tâches planifiées, Telegram et mot d'éveil restent disponibles.
+            </span>
+          </span>
+        </label>
       </Card>
 
       <Card className="space-y-3">

@@ -677,6 +677,9 @@ fn remove_telegram_chat(app: App<'_>, id: i64) -> CmdResult<()> {
     app.remove_telegram_chat(id).map_err(err)
 }
 
+/// Argument passé par le lancement automatique avec Windows.
+const MINIMIZED_ARG: &str = "--minimized";
+
 fn show_window(app: &AppHandle) {
     if let Some(w) = app.get_webview_window("main") {
         let _ = w.show();
@@ -762,10 +765,20 @@ pub fn run() {
         .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_process::init())
+        // Lancement à l'ouverture de session : discret, dans la zone de notification.
+        .plugin(
+            tauri_plugin_autostart::Builder::new()
+                .args([MINIMIZED_ARG])
+                .build(),
+        )
         .setup({
             let claudio = claudio.clone();
             move |app| {
                 install_event_sink(app.handle(), &claudio);
+                // La fenêtre est créée cachée : montrée sauf démarrage avec Windows.
+                if !std::env::args().any(|a| a == MINIMIZED_ARG) {
+                    show_window(app.handle());
+                }
                 install_tray(app)?;
                 tauri::async_runtime::spawn(claudio.clone().scheduler_loop());
                 // Index : remise à jour au démarrage, puis surveillance des dossiers.

@@ -31,6 +31,11 @@ Voir [PLAN.md](PLAN.md) pour la vision complète et la feuille de route.
 - Voix, entièrement locale : dictée (whisper.cpp, modèle choisi selon la machine), mot d'éveil « Claudio » (facultatif), lecture des réponses par les voix Windows ou Piper.
 - Canal Telegram : parler à Claudio depuis son téléphone, conversations jumelées par code, autorisations par boutons.
 - Installateur Windows (NSIS, sans droits administrateur) et mise à jour automatique signée.
+- Démarrage avec Windows (facultatif, Paramètres › Démarrage) : Claudio se lance caché dans la zone de notification.
+
+## Installation
+
+Lancer `Claudio_<version>_x64-setup.exe` (publié dans les versions GitHub, ou produit dans `target/release/bundle/nsis`). Claudio s'installe pour l'utilisateur courant dans `%LOCALAPPDATA%\Claudio`, avec un raccourci dans le menu Démarrer ; il se désinstalle depuis Paramètres Windows › Applications. Les données (modèles, conversations, réglages) sont conservées à la désinstallation.
 
 ## Développement
 
