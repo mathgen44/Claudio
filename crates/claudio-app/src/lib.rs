@@ -7,6 +7,8 @@ mod cloud;
 mod conversation;
 mod hub;
 pub mod router;
+mod schedule;
+mod tasks;
 
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex, RwLock};
@@ -26,6 +28,7 @@ use claudio_models::{
 use serde::Serialize;
 
 pub use access::AccessOverview;
+pub use claudio_agents;
 pub use claudio_core;
 pub use claudio_hw;
 pub use claudio_llm;
@@ -35,6 +38,8 @@ pub use claudio_tools;
 pub use cloud::{BudgetStatus, ProviderView, UsageReport};
 pub use conversation::{Reply, StreamEvent, ToolTrace};
 pub use hub::{RepoView, VariantView};
+pub use schedule::ScheduleView;
+pub use tasks::{AppEvent, EventSink, TaskDetail};
 
 pub const DEFAULT_SESSION_TITLE: &str = "Nouvelle conversation";
 
@@ -55,7 +60,16 @@ pub struct Claudio {
     pub(crate) approvals:
         Mutex<HashMap<String, tokio::sync::oneshot::Sender<claudio_perms::Answer>>>,
     pub(crate) approval_seq: std::sync::atomic::AtomicU64,
+    pub(crate) agents: RwLock<claudio_agents::AgentSet>,
+    pub(crate) running_tasks: Mutex<HashMap<String, CancelToken>>,
+    pub(crate) events: RwLock<Option<tasks::EventSink>>,
+    /// Places d'exécution simultanée des agents (modèle local / distant).
+    pub(crate) local_slots: Arc<tokio::sync::Semaphore>,
+    pub(crate) cloud_slots: Arc<tokio::sync::Semaphore>,
 }
+
+/// Agents distants exécutés en même temps au plus.
+const CLOUD_PARALLEL: usize = 4;
 
 #[derive(Debug, Clone, Serialize)]
 pub struct Status {
@@ -99,7 +113,23 @@ impl Claudio {
             protected,
             workspace,
         );
+        let readme = paths.agents_dir().join("LISEZMOI.txt");
+        if !readme.exists() {
+            std::fs::write(&readme, claudio_agents::defs::README).ok();
+        }
+        let agents = claudio_agents::AgentSet::load(Some(&paths.agents_dir()));
+        let interrupted = db.mark_interrupted_tasks()?;
+        if interrupted > 0 {
+            tracing::info!(interrupted, "tâches interrompues par l'arrêt précédent");
+        }
+        let hw = HardwareInfo::detect();
+        let parallel = hw.profile().max_parallel_agents.max(1);
         Ok(Arc::new(Self {
+            agents: RwLock::new(agents),
+            running_tasks: Mutex::default(),
+            events: RwLock::default(),
+            local_slots: Arc::new(tokio::sync::Semaphore::new(parallel)),
+            cloud_slots: Arc::new(tokio::sync::Semaphore::new(CLOUD_PARALLEL)),
             perms,
             toolbox: claudio_tools::Toolbox::new(Arc::default()),
             approvals: Mutex::default(),
@@ -107,7 +137,7 @@ impl Claudio {
             config: RwLock::new(config),
             db,
             http: claudio_models::download::client(),
-            hw: RwLock::new(HardwareInfo::detect()),
+            hw: RwLock::new(hw),
             catalog: Catalog::builtin()?,
             engine: LocalEngine::default(),
             downloads: Mutex::default(),
@@ -344,13 +374,40 @@ impl Claudio {
             .context_size
             .unwrap_or(DEFAULT_CONTEXT)
             .min(model_max.unwrap_or(u32::MAX));
+        // Plusieurs agents peuvent interroger le modèle en même temps : le contexte
+        // partagé est agrandi tant qu'il tient dans la mémoire vidéo.
+        let parallel = profile.max_parallel_agents.max(1) as u32;
+        let fits = |total: u32| -> bool {
+            let meta = claudio_models::select::ModelMeta {
+                params_b: m.params_b,
+                active_params_b: None,
+                moe: false,
+            };
+            let need = match self
+                .catalog
+                .get(&m.model_id)
+                .and_then(|c| c.quant(&m.quant).map(|q| (c, q)))
+            {
+                Some((c, q)) => select::memory_needed(c, q, total),
+                None => {
+                    select::estimate_fit(&profile, m.size, &m.quant, total, &meta).memory_needed
+                }
+            };
+            need <= profile.vram_budget
+        };
+        let total = [parallel, 2]
+            .into_iter()
+            .map(|k| ctx.saturating_mul(k))
+            .find(|&t| t > ctx && fits(t))
+            .unwrap_or(ctx);
         Ok(ServerConfig {
             exe: rt.server_exe(),
             model_path: self.registry().path_of(m),
             alias: m.key.clone(),
-            context: ctx,
+            context: total,
             use_gpu: rt.backend.uses_gpu() && profile.gpu_index.is_some(),
             threads: profile.threads,
+            parallel,
         })
     }
 

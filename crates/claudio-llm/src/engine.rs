@@ -15,6 +15,7 @@ fn same(a: &ServerConfig, b: &ServerConfig) -> bool {
     a.model_path == b.model_path
         && a.context == b.context
         && a.use_gpu == b.use_gpu
+        && a.parallel == b.parallel
         && a.exe == b.exe
 }
 

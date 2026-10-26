@@ -112,6 +112,8 @@ pub struct Options {
     /// Active ou coupe le raisonnement des modèles qui le proposent.
     pub thinking: Option<bool>,
     pub tools: Vec<ToolDef>,
+    /// Réponse contrainte à ce schéma JSON (sortie structurée), si le fournisseur le permet.
+    pub json_schema: Option<Value>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
@@ -343,6 +345,18 @@ pub async fn stream(
     }
     if let Some(m) = opts.max_tokens {
         body["max_tokens"] = m.into();
+    }
+    // llama-server en fait une grammaire ; OpenAI et OpenRouter l'acceptent tel quel.
+    if let Some(schema) = &opts.json_schema
+        && matches!(
+            endpoint.api,
+            Api::Local | Api::OpenAi { stream_usage: true }
+        )
+    {
+        body["response_format"] = serde_json::json!({
+            "type": "json_schema",
+            "json_schema": {"name": "reponse", "schema": schema, "strict": true}
+        });
     }
     let mut req = http
         .post(format!(

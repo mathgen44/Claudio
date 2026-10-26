@@ -72,6 +72,50 @@ const MIGRATIONS: &[&str] = &[
     CREATE TRIGGER audit_no_delete BEFORE DELETE ON audit
         BEGIN SELECT RAISE(ABORT, 'journal en ajout seul'); END;
 "#,
+    r#"
+    CREATE TABLE schedules (
+        id          INTEGER PRIMARY KEY AUTOINCREMENT,
+        title       TEXT NOT NULL,
+        objective   TEXT NOT NULL,
+        mode        TEXT NOT NULL,
+        cron        TEXT NOT NULL,
+        enabled     INTEGER NOT NULL,
+        last_run    TEXT,
+        created_at  TEXT NOT NULL
+    );
+    CREATE TABLE tasks (
+        id          TEXT PRIMARY KEY,
+        title       TEXT NOT NULL,
+        objective   TEXT NOT NULL,
+        mode        TEXT NOT NULL,
+        status      TEXT NOT NULL,
+        result      TEXT,
+        error       TEXT,
+        schedule_id INTEGER REFERENCES schedules(id) ON DELETE SET NULL,
+        tokens      INTEGER NOT NULL DEFAULT 0,
+        cost_usd    REAL NOT NULL DEFAULT 0,
+        created_at  TEXT NOT NULL,
+        updated_at  TEXT NOT NULL
+    );
+    CREATE TABLE task_steps (
+        task_id      TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+        step_id      TEXT NOT NULL,
+        position     INTEGER NOT NULL,
+        agent        TEXT NOT NULL,
+        title        TEXT NOT NULL,
+        instructions TEXT NOT NULL,
+        depends_on   TEXT NOT NULL,
+        status       TEXT NOT NULL,
+        output       TEXT,
+        error        TEXT,
+        model        TEXT,
+        log          TEXT NOT NULL DEFAULT '',
+        started_at   TEXT,
+        finished_at  TEXT,
+        PRIMARY KEY (task_id, step_id)
+    );
+    CREATE INDEX tasks_created ON tasks(created_at);
+"#,
 ];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

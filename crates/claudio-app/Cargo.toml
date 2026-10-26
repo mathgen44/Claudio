@@ -8,12 +8,14 @@ authors.workspace = true
 [dependencies]
 anyhow = "1.0.104"
 chrono = "0.4.45"
+claudio-agents = { version = "0.1.0", path = "../claudio-agents" }
 claudio-core = { version = "0.1.0", path = "../claudio-core" }
 claudio-hw = { version = "0.1.0", path = "../claudio-hw" }
 claudio-llm = { version = "0.1.0", path = "../claudio-llm" }
 claudio-models = { version = "0.1.0", path = "../claudio-models" }
 claudio-perms = { version = "0.1.0", path = "../claudio-perms" }
 claudio-tools = { version = "0.1.0", path = "../claudio-tools" }
+croner = "4.0.2"
 reqwest = "0.13.5"
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.154"
@@ -21,6 +23,7 @@ tokio = { version = "1.54.1", features = ["sync", "rt", "macros", "time"] }
 tracing = "0.1.44"
 
 [dev-dependencies]
+chrono = "0.4.45"
 serde_json = "1.0.154"
 tempfile = "3.27.0"
 tokio = { version = "1.54.1", features = ["rt-multi-thread", "macros", "net", "io-util"] }

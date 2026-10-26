@@ -2,8 +2,9 @@
 // une implémentation simulée prend le relais.
 
 import { Channel, invoke } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
-import { mockInvoke } from "./mock";
+import { mockInvoke, mockListen } from "./mock";
 
 export type GpuVendor = "nvidia" | "amd" | "intel" | "other";
 export type Tier = "S" | "M" | "L" | "XL";
@@ -181,6 +182,84 @@ export interface ApprovalRequest {
   options: Answer[];
   dangerous: boolean;
 }
+
+export type ModelPref = "auto" | "local" | "cloud";
+
+export interface AgentDef {
+  id: string;
+  name: string;
+  description: string;
+  model: ModelPref;
+  tools: string[];
+  max_steps: number;
+  thinking: boolean | null;
+  system_prompt: string;
+  builtin: boolean;
+}
+
+export interface AgentsView {
+  agents: AgentDef[];
+  errors: [string, string][];
+}
+
+export type TaskStatus = "planning" | "running" | "done" | "partial" | "failed" | "cancelled" | "interrupted";
+export type StepStatus = "pending" | "running" | "waiting" | "done" | "failed" | "skipped" | "cancelled";
+
+export interface Task {
+  id: string;
+  title: string;
+  objective: string;
+  mode: string;
+  status: TaskStatus;
+  result: string | null;
+  error: string | null;
+  schedule_id: number | null;
+  tokens: number;
+  cost_usd: number;
+  created_at: string;
+  updated_at: string;
+  steps_done: number;
+  steps_total: number;
+}
+
+export interface TaskStep {
+  step_id: string;
+  position: number;
+  agent: string;
+  title: string;
+  instructions: string;
+  depends_on: string[];
+  status: StepStatus;
+  output: string | null;
+  error: string | null;
+  model: string | null;
+  log: string;
+  started_at: string | null;
+  finished_at: string | null;
+}
+
+export interface TaskDetail extends Task {
+  steps: TaskStep[];
+  levels: string[][];
+}
+
+export interface ScheduleView {
+  id: number;
+  title: string;
+  objective: string;
+  mode: string;
+  cron: string;
+  enabled: boolean;
+  last_run: string | null;
+  created_at: string;
+  next_run: string | null;
+}
+
+export type AppEvent =
+  | { type: "task_updated"; task_id: string }
+  | { type: "step_output"; task_id: string; step_id: string; text: string }
+  | ({ type: "approval"; task_id: string; task_title: string; step_title: string } & ApprovalRequest)
+  | { type: "task_finished"; task_id: string; title: string; status: TaskStatus };
 
 export interface ToolTrace {
   name: string;
@@ -362,7 +441,7 @@ export const api = {
   config: () => call<Config>("get_config"),
   updateSettings: (patch: SettingsPatch) => call<Config>("update_settings", { patch }),
   setHfToken: (token: string | null) => call<void>("set_hf_token", { token }),
-  openFolder: (which: "logs" | "models" | "data" | "workspace") => call<void>("open_folder", { which }),
+  openFolder: (which: "logs" | "models" | "data" | "workspace" | "agents") => call<void>("open_folder", { which }),
   sessions: () => call<Session[]>("list_sessions"),
   createSession: () => call<Session>("create_session"),
   renameSession: (id: string, title: string) => call<void>("rename_session", { id, title }),
@@ -408,6 +487,27 @@ export const api = {
   setMcpEnabled: (id: string, enabled: boolean) => call<void>("set_mcp_enabled", { id, enabled }),
   removeMcpServer: (id: string) => call<void>("remove_mcp_server", { id }),
   testMcpServer: (id: string) => call<McpTool[]>("test_mcp_server", { id }),
+  listAgents: (reload = false) => call<AgentsView>("list_agents", { reload }),
+  listTasks: () => call<Task[]>("list_tasks"),
+  taskDetail: (id: string) => call<TaskDetail>("task_detail", { id }),
+  startTask: (objective: string, mode: string) => call<Task>("start_task", { objective, mode }),
+  cancelTask: (id: string) => call<void>("cancel_task", { id }),
+  resumeTask: (id: string) => call<void>("resume_task", { id }),
+  deleteTask: (id: string) => call<void>("delete_task", { id }),
+  listSchedules: () => call<ScheduleView[]>("list_schedules"),
+  addSchedule: (title: string, objective: string, mode: string, cron: string) =>
+    call<ScheduleView>("add_schedule", { title, objective, mode, cron }),
+  setScheduleEnabled: (id: number, enabled: boolean) => call<void>("set_schedule_enabled", { id, enabled }),
+  deleteSchedule: (id: number) => call<void>("delete_schedule", { id }),
+  runScheduleNow: (id: number) => call<string>("run_schedule_now", { id }),
+  /** Abonnement aux événements des tâches de fond ; renvoie la fonction de désabonnement. */
+  onAppEvent: (handler: (e: AppEvent) => void): (() => void) => {
+    if (!inTauri) return mockListen(handler);
+    const un = listen<AppEvent>("claudio://event", (e) => handler(e.payload));
+    return () => {
+      un.then((f) => f());
+    };
+  },
   /** Sélecteur de dossier natif (saisie manuelle en mode simulé). */
   pickFolder: async (): Promise<string | null> => {
     if (!inTauri) return window.prompt("Chemin du dossier", "C:\\Users\\vous\\Documents");
@@ -436,6 +536,26 @@ export function toolLabel(name: string): string {
   }
   return labels[name] ?? name;
 }
+
+export const taskStatusLabels: Record<TaskStatus, string> = {
+  planning: "Planification",
+  running: "En cours",
+  done: "Terminée",
+  partial: "Partielle",
+  failed: "En échec",
+  cancelled: "Annulée",
+  interrupted: "Interrompue",
+};
+
+export const stepStatusLabels: Record<StepStatus, string> = {
+  pending: "À faire",
+  running: "En cours",
+  waiting: "Attend votre accord",
+  done: "Terminée",
+  failed: "En échec",
+  skipped: "Non exécutée",
+  cancelled: "Annulée",
+};
 
 export const routingLabels: Record<RoutingMode, string> = {
   local: "Local uniquement",

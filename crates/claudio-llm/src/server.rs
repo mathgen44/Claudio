@@ -24,6 +24,9 @@ pub struct ServerConfig {
     /// (et les experts des modèles MoE) selon la mémoire libre (`--fit`).
     pub use_gpu: bool,
     pub threads: usize,
+    /// Demandes traitées en même temps (agents en parallèle) ; le contexte est
+    /// partagé entre elles (`--kv-unified`).
+    pub parallel: u32,
 }
 
 impl ServerConfig {
@@ -42,7 +45,8 @@ impl ServerConfig {
             "--threads".into(),
             self.threads.to_string(),
             "--parallel".into(),
-            "1".into(),
+            self.parallel.max(1).to_string(),
+            "--kv-unified".into(),
             // Modèle de conversation intégré au fichier GGUF (outils, raisonnement).
             "--jinja".into(),
             "--no-webui".into(),

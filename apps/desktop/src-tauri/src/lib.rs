@@ -3,11 +3,13 @@
 
 use std::sync::Arc;
 
+use claudio_app::claudio_agents::AgentDef;
 use claudio_app::claudio_core::audit::AuditEntry;
 use claudio_app::claudio_core::config::{
     ActiveModel, Budget, CloudModel, McpServerConfig, McpTransport, Permissions, ProviderKind,
     RoutingMode,
 };
+use claudio_app::claudio_core::tasks::{Schedule, Task, TaskStatus};
 use claudio_app::claudio_core::{AppPaths, Config, Message, Session};
 use claudio_app::claudio_llm::providers::RemoteModel;
 use claudio_app::claudio_llm::runtime::{InstallEvent, InstalledRuntime};
@@ -16,12 +18,15 @@ use claudio_app::claudio_models::{InstalledModel, Progress};
 use claudio_app::claudio_perms::Answer;
 use claudio_app::claudio_tools::mcp::McpTool;
 use claudio_app::{
-    AccessOverview, BudgetStatus, Claudio, ProviderView, Recommendation, Reply, RepoView, Status,
-    StreamEvent, UsageReport,
+    AccessOverview, AppEvent, BudgetStatus, Claudio, ProviderView, Recommendation, Reply, RepoView,
+    ScheduleView, Status, StreamEvent, TaskDetail, UsageReport,
 };
 use serde::Deserialize;
 use tauri::ipc::Channel;
-use tauri::{Manager, State};
+use tauri::menu::{Menu, MenuItem};
+use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
+use tauri::{AppHandle, Emitter, Manager, State, WindowEvent};
+use tauri_plugin_notification::NotificationExt;
 
 type App<'a> = State<'a, Arc<Claudio>>;
 type CmdResult<T> = Result<T, String>;
@@ -146,6 +151,7 @@ fn open_folder(app: App<'_>, which: String) -> CmdResult<()> {
         "models" => app.registry().root().to_path_buf(),
         "data" => app.paths.data_dir.clone(),
         "workspace" => app.paths.workspace_dir(),
+        "agents" => app.paths.agents_dir(),
         _ => return Err("dossier inconnu".into()),
     };
     tauri_plugin_opener::open_path(path, None::<&str>).map_err(|e| e.to_string())
@@ -385,6 +391,157 @@ async fn test_mcp_server(app: App<'_>, id: String) -> CmdResult<Vec<McpTool>> {
     app.test_mcp_server(&id).await.map_err(err)
 }
 
+// ---- Agents, tâches, planifications ------------------------------------------
+
+#[derive(serde::Serialize)]
+struct AgentsView {
+    agents: Vec<AgentDef>,
+    /// Fichiers ignorés : (nom, raison).
+    errors: Vec<(String, String)>,
+}
+
+#[tauri::command]
+fn list_agents(app: App<'_>, reload: bool) -> AgentsView {
+    let set = if reload {
+        app.reload_agents()
+    } else {
+        app.agents()
+    };
+    AgentsView {
+        agents: set.agents,
+        errors: set.errors,
+    }
+}
+
+#[tauri::command]
+fn list_tasks(app: App<'_>) -> CmdResult<Vec<Task>> {
+    app.list_tasks(100).map_err(err)
+}
+
+#[tauri::command]
+fn task_detail(app: App<'_>, id: String) -> CmdResult<TaskDetail> {
+    app.task_detail(&id).map_err(err)
+}
+
+#[tauri::command]
+fn start_task(app: App<'_>, objective: String, mode: String) -> CmdResult<Task> {
+    app.inner().start_task(&objective, &mode, None).map_err(err)
+}
+
+#[tauri::command]
+fn cancel_task(app: App<'_>, id: String) {
+    app.cancel_task(&id);
+}
+
+#[tauri::command]
+fn resume_task(app: App<'_>, id: String) -> CmdResult<()> {
+    app.inner().resume_task(&id).map_err(err)
+}
+
+#[tauri::command]
+fn delete_task(app: App<'_>, id: String) -> CmdResult<()> {
+    app.delete_task(&id).map_err(err)
+}
+
+#[tauri::command]
+fn list_schedules(app: App<'_>) -> CmdResult<Vec<ScheduleView>> {
+    app.schedules().map_err(err)
+}
+
+#[tauri::command]
+fn add_schedule(
+    app: App<'_>,
+    title: String,
+    objective: String,
+    mode: String,
+    cron: String,
+) -> CmdResult<Schedule> {
+    app.add_schedule(&title, &objective, &mode, &cron)
+        .map_err(err)
+}
+
+#[tauri::command]
+fn set_schedule_enabled(app: App<'_>, id: i64, enabled: bool) -> CmdResult<()> {
+    app.set_schedule_enabled(id, enabled).map_err(err)
+}
+
+#[tauri::command]
+fn delete_schedule(app: App<'_>, id: i64) -> CmdResult<()> {
+    app.delete_schedule(id).map_err(err)
+}
+
+#[tauri::command]
+fn run_schedule_now(app: App<'_>, id: i64) -> CmdResult<String> {
+    app.inner().run_schedule_now(id).map_err(err)
+}
+
+fn show_window(app: &AppHandle) {
+    if let Some(w) = app.get_webview_window("main") {
+        let _ = w.show();
+        let _ = w.unminimize();
+        let _ = w.set_focus();
+    }
+}
+
+/// Événements des tâches vers l'interface, et notification Windows à la fin d'une tâche.
+fn install_event_sink(handle: &AppHandle, claudio: &Arc<Claudio>) {
+    let h = handle.clone();
+    claudio.set_event_sink(Arc::new(move |ev: AppEvent| {
+        match &ev {
+            AppEvent::TaskFinished { title, status, .. } => {
+                let body = match status {
+                    TaskStatus::Done => "Terminée.",
+                    TaskStatus::Partial => "Terminée, avec des étapes en échec.",
+                    TaskStatus::Cancelled => "Annulée.",
+                    _ => "En échec.",
+                };
+                let _ = h.notification().builder().title(title).body(body).show();
+            }
+            AppEvent::Approval { task_title, .. } => {
+                let _ = h
+                    .notification()
+                    .builder()
+                    .title("Claudio attend votre accord")
+                    .body(task_title)
+                    .show();
+            }
+            _ => {}
+        }
+        let _ = h.emit("claudio://event", ev);
+    }));
+}
+
+/// Icône de la zone de notification : Claudio continue ses tâches fenêtre fermée.
+fn install_tray(app: &tauri::App) -> tauri::Result<()> {
+    let open = MenuItem::with_id(app, "open", "Ouvrir Claudio", true, None::<&str>)?;
+    let quit = MenuItem::with_id(app, "quit", "Quitter Claudio", true, None::<&str>)?;
+    let menu = Menu::with_items(app, &[&open, &quit])?;
+    let mut tray = TrayIconBuilder::with_id("claudio")
+        .tooltip("Claudio")
+        .menu(&menu)
+        .show_menu_on_left_click(false)
+        .on_menu_event(|app, ev| match ev.id().as_ref() {
+            "open" => show_window(app),
+            "quit" => app.exit(0),
+            _ => {}
+        })
+        .on_tray_icon_event(|tray, ev| {
+            if let TrayIconEvent::Click {
+                button: MouseButton::Left,
+                button_state: MouseButtonState::Up,
+                ..
+            } = ev
+            {
+                show_window(tray.app_handle());
+            }
+        });
+    if let Some(icon) = app.default_window_icon() {
+        tray = tray.icon(icon.clone());
+    }
+    tray.build(app)?;
+    Ok(())
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let paths = AppPaths::resolve().expect("dossiers de Claudio");
@@ -396,13 +553,27 @@ pub fn run() {
     tauri::Builder::default()
         // Une seule instance : relancer Claudio ramène la fenêtre existante.
         .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
-            if let Some(w) = app.get_webview_window("main") {
-                let _ = w.unminimize();
-                let _ = w.set_focus();
-            }
+            show_window(app)
         }))
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_notification::init())
+        .setup({
+            let claudio = claudio.clone();
+            move |app| {
+                install_event_sink(app.handle(), &claudio);
+                install_tray(app)?;
+                tauri::async_runtime::spawn(claudio.clone().scheduler_loop());
+                Ok(())
+            }
+        })
+        .on_window_event(|window, event| {
+            // Fermer la fenêtre la cache : les tâches et planifications continuent.
+            if let WindowEvent::CloseRequested { api, .. } = event {
+                let _ = window.hide();
+                api.prevent_close();
+            }
+        })
         .manage(claudio)
         .manage(guard)
         .invoke_handler(tauri::generate_handler![
@@ -454,6 +625,18 @@ pub fn run() {
             set_mcp_enabled,
             remove_mcp_server,
             test_mcp_server,
+            list_agents,
+            list_tasks,
+            task_detail,
+            start_task,
+            cancel_task,
+            resume_task,
+            delete_task,
+            list_schedules,
+            add_schedule,
+            set_schedule_enabled,
+            delete_schedule,
+            run_schedule_now,
         ])
         .build(tauri::generate_context!())
         .expect("construction de l'application")

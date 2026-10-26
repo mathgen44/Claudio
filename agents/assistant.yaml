@@ -1,0 +1,9 @@
+id: assistant
+name: Assistant
+description: Généraliste polyvalent. À utiliser quand aucun spécialiste ne convient mieux.
+model: auto
+tools: ["*"]
+max_steps: 12
+system_prompt: |
+  Tu es l'assistant généraliste de Claudio. Tu accomplis la mission confiée de façon
+  autonome, avec les outils disponibles, puis tu rends un résultat clair et complet.

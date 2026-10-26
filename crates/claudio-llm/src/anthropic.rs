@@ -118,6 +118,9 @@ pub(crate) fn request_body(endpoint: &Endpoint, messages: &[ChatMessage], opts: 
     if SERVER_FALLBACK_MODELS.contains(&endpoint.model.as_str()) {
         body["fallbacks"] = "default".into();
     }
+    if let Some(schema) = &opts.json_schema {
+        body["output_config"] = json!({"format": {"type": "json_schema", "schema": schema}});
+    }
     if !opts.tools.is_empty() {
         body["tools"] = opts
             .tools

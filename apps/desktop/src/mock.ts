@@ -3,6 +3,11 @@
 
 import type {
   AccessOverview,
+  AgentDef,
+  AppEvent,
+  ScheduleView,
+  TaskDetail,
+  TaskStep,
   ActiveModel,
   Answer,
   AuditEntry,
@@ -165,6 +170,72 @@ async function fakeDownload(total: number, key: string, report: (p: Progress) =>
     await sleep(120);
     report({ downloaded: (total * i) / steps, total, bytes_per_sec: 85e6 });
   }
+}
+
+// ---- Tâches simulées ----------------------------------------------------------
+
+const listeners = new Set<(e: AppEvent) => void>();
+export function mockListen(handler: (e: AppEvent) => void): () => void {
+  listeners.add(handler);
+  return () => listeners.delete(handler);
+}
+const emitApp = (e: AppEvent) => listeners.forEach((l) => l(e));
+
+const agent = (id: string, name: string, description: string, tools: string[]): AgentDef => ({
+  id, name, description, tools, model: "auto", max_steps: 12, thinking: null, system_prompt: "…", builtin: true,
+});
+const AGENTS: AgentDef[] = [
+  agent("assistant", "Assistant", "Généraliste polyvalent.", ["*"]),
+  agent("planner", "Planificateur", "Découpe un objectif en étapes.", []),
+  agent("researcher", "Documentaliste", "Recherche d'informations sur le web et dans les fichiers, avec sources.", ["web_search", "web_fetch", "read_file"]),
+  agent("analyst", "Analyste", "Analyse des données et présente des chiffres.", ["read_file", "run_powershell"]),
+  agent("reviewer", "Relecteur", "Vérifie les résultats et rédige la réponse finale.", ["read_file"]),
+];
+const tasks: TaskDetail[] = [];
+const schedules: ScheduleView[] = [];
+
+function simulateTask(t: TaskDetail) {
+  const step = (step_id: string, agent: string, title: string, depends_on: string[]): TaskStep => ({
+    step_id, position: 0, agent, title, instructions: `Mission : ${title.toLowerCase()}.`, depends_on, status: "pending",
+    output: null, error: null, model: null, log: "", started_at: null, finished_at: null,
+  });
+  const upd = () => emitApp({ type: "task_updated", task_id: t.id });
+  setTimeout(() => {
+    t.steps = [
+      step("e1", "researcher", "Rechercher les tarifs", []),
+      step("e2", "analyst", "Analyser les factures", []),
+      step("synthese", "reviewer", "Vérification et synthèse", ["e1", "e2"]),
+    ];
+    t.levels = [["e1", "e2"], ["synthese"]];
+    t.steps_total = 3;
+    t.status = "running";
+    upd();
+    const run = async (s: TaskStep, text: string, ms: number) => {
+      s.status = "running";
+      s.model = "gemma-4-12b:Q6_K";
+      s.log += "▶ local · gemma-4-12b:Q6_K · modèle local\n🔧 read_file {\"path\":\"D:\\\\Factures\\\\2026-09.pdf\"}\n";
+      upd();
+      for (const w of text.split(/(?<= )/)) {
+        await sleep(ms);
+        emitApp({ type: "step_output", task_id: t.id, step_id: s.step_id, text: w });
+      }
+      s.status = "done";
+      s.output = text;
+      t.steps_done += 1;
+      upd();
+    };
+    Promise.all([
+      run(t.steps[0], "Le tarif de base EDF est de **0,2516 €/kWh** (source : edf.fr).", 60),
+      run(t.steps[1], "Consommation moyenne : **412 kWh/mois**, en hausse de 8 % sur un an.", 80),
+    ]).then(async () => {
+      await run(t.steps[2], "## Synthèse\n\nVotre facture moyenne est d'environ **104 €/mois**. Pistes : heures creuses, chauffe-eau programmé.", 40);
+      t.status = "done";
+      t.result = t.steps[2].output;
+      t.tokens = 4210;
+      upd();
+      emitApp({ type: "task_finished", task_id: t.id, title: t.title, status: "done" });
+    });
+  }, 900);
 }
 
 export async function mockInvoke<T>(cmd: string, args: Record<string, any> = {}): Promise<T> {
@@ -347,6 +418,48 @@ export async function mockInvoke<T>(cmd: string, args: Record<string, any> = {})
         { name: "search_repositories", description: "Cherche des dépôts" },
         { name: "create_issue", description: "Crée un ticket" },
       ]);
+    case "list_agents":
+      return r({ agents: AGENTS, errors: [] });
+    case "list_tasks":
+      return r(tasks.map(({ steps: _s, levels: _l, ...t }) => t));
+    case "task_detail":
+      return r(structuredClone(tasks.find((t) => t.id === args.id)!));
+    case "start_task": {
+      const now = new Date().toISOString();
+      const t: TaskDetail = {
+        id: crypto.randomUUID(), title: String(args.objective).slice(0, 48), objective: args.objective, mode: args.mode,
+        status: "planning", result: null, error: null, schedule_id: null, tokens: 0, cost_usd: 0, created_at: now,
+        updated_at: now, steps_done: 0, steps_total: 0, steps: [], levels: [],
+      };
+      tasks.unshift(t);
+      simulateTask(t);
+      return r(t);
+    }
+    case "cancel_task":
+    case "resume_task":
+      return r(undefined);
+    case "delete_task":
+      tasks.splice(tasks.findIndex((t) => t.id === args.id), 1);
+      return r(undefined);
+    case "list_schedules":
+      return r(schedules);
+    case "add_schedule": {
+      const s: ScheduleView = {
+        id: schedules.length + 1, title: args.title || String(args.objective).slice(0, 48), objective: args.objective,
+        mode: args.mode, cron: args.cron, enabled: true, last_run: null, created_at: new Date().toISOString(),
+        next_run: new Date(Date.now() + 36e5 * 14).toISOString(),
+      };
+      schedules.push(s);
+      return r(s);
+    }
+    case "set_schedule_enabled":
+      schedules.find((s) => s.id === args.id)!.enabled = args.enabled;
+      return r(undefined);
+    case "delete_schedule":
+      schedules.splice(schedules.findIndex((s) => s.id === args.id), 1);
+      return r(undefined);
+    case "run_schedule_now":
+      return r("x");
     case "set_session_route":
       sessions.find((s) => s.id === args.sessionId)!.route = args.mode;
       return r(undefined);

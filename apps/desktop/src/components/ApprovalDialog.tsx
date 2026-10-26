@@ -11,7 +11,16 @@ const LABELS: Record<Exclude<Answer, "deny">, string> = {
   always: "Toujours",
 };
 
-export function ApprovalDialog({ request, onAnswer }: { request: ApprovalRequest; onAnswer: (a: Answer) => void }) {
+export function ApprovalDialog({
+  request,
+  onAnswer,
+  context,
+}: {
+  request: ApprovalRequest;
+  onAnswer: (a: Answer) => void;
+  /** Origine de la demande (tâche de fond). */
+  context?: string;
+}) {
   const denyRef = useRef<HTMLButtonElement>(null);
 
   useEffect(() => {
@@ -36,7 +45,9 @@ export function ApprovalDialog({ request, onAnswer }: { request: ApprovalRequest
             <h2 id="approval-title" className="font-semibold">
               {request.title}
             </h2>
-            <p className="text-sm text-[var(--muted)]">Demandé par l'assistant · outil « {toolLabel(request.tool)} »</p>
+            <p className="text-sm text-[var(--muted)]">
+              {context ?? "Demandé par l'assistant"} · outil « {toolLabel(request.tool)} »
+            </p>
           </div>
         </div>
         <pre className="max-h-64 overflow-auto rounded-lg bg-[var(--panel-2)] p-3 font-mono text-xs whitespace-pre-wrap break-all">
@@ -55,7 +66,7 @@ export function ApprovalDialog({ request, onAnswer }: { request: ApprovalRequest
                 className={i === 0 && request.dangerous ? "border border-[var(--danger)]" : ""}
                 onClick={() => onAnswer(o)}
               >
-                {LABELS[o]}
+                {o === "session" && context ? "Pour cette tâche" : LABELS[o]}
               </Button>
             ))}
         </div>

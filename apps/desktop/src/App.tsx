@@ -1,10 +1,13 @@
 import clsx from "clsx";
-import { Boxes, Cloud as CloudIcon, MessageSquare, ScrollText, Settings as SettingsIcon, ShieldCheck } from "lucide-react";
+import { Bot, Boxes, Cloud as CloudIcon, MessageSquare, ScrollText, Settings as SettingsIcon, ShieldCheck } from "lucide-react";
 import { useEffect, useState, type ReactNode } from "react";
+import { api, type AppEvent } from "./api";
+import { ApprovalDialog } from "./components/ApprovalDialog";
 import { DownloadRow } from "./components/DownloadRow";
 import { StoreProvider, useStore } from "./store";
 import { ErrorNote, Spinner } from "./ui";
 import { Access } from "./views/Access";
+import { Agents } from "./views/Agents";
 import { Chat } from "./views/Chat";
 import { Cloud } from "./views/Cloud";
 import { Models } from "./views/Models";
@@ -12,7 +15,7 @@ import { Journal } from "./views/Journal";
 import { Onboarding } from "./views/Onboarding";
 import { Settings } from "./views/Settings";
 
-type View = "chat" | "models" | "cloud" | "access" | "journal" | "settings" | "onboarding";
+type View = "chat" | "agents" | "models" | "cloud" | "access" | "journal" | "settings" | "onboarding";
 
 export default function App() {
   return (
@@ -25,6 +28,16 @@ export default function App() {
 function Shell() {
   const { status, statusError, downloads } = useStore();
   const [view, setView] = useState<View | null>(null);
+  // Demandes d'autorisation des tâches de fond, visibles depuis tous les écrans.
+  const [taskApprovals, setTaskApprovals] = useState<Extract<AppEvent, { type: "approval" }>[]>([]);
+
+  useEffect(
+    () =>
+      api.onAppEvent((e) => {
+        if (e.type === "approval") setTaskApprovals((a) => [...a, e]);
+      }),
+    [],
+  );
 
   useEffect(() => {
     if (status && view == null) setView(status.onboarding_done ? "chat" : "onboarding");
@@ -50,6 +63,9 @@ function Shell() {
         </div>
         <NavButton label="Conversations" active={view === "chat"} onClick={() => setView("chat")}>
           <MessageSquare size={20} />
+        </NavButton>
+        <NavButton label="Agents et tâches" active={view === "agents"} onClick={() => setView("agents")}>
+          <Bot size={20} />
         </NavButton>
         <NavButton label="Modèles" active={view === "models"} onClick={() => setView("models")}>
           <Boxes size={20} />
@@ -79,6 +95,7 @@ function Shell() {
         <div className="min-h-0 flex-1 overflow-y-auto">
           {view === "onboarding" && <Onboarding onDone={() => setView("chat")} />}
           {view === "chat" && <Chat onOpenModels={() => setView("models")} />}
+          {view === "agents" && <Agents />}
           {view === "models" && <Models />}
           {view === "cloud" && <Cloud />}
           {view === "access" && <Access />}
@@ -86,6 +103,17 @@ function Shell() {
           {view === "settings" && <Settings onRestartOnboarding={() => setView("onboarding")} />}
         </div>
       </main>
+      {taskApprovals[0] && (
+        <ApprovalDialog
+          request={taskApprovals[0]}
+          context={`Tâche « ${taskApprovals[0].task_title} », étape « ${taskApprovals[0].step_title} »`}
+          onAnswer={(a) => {
+            const req = taskApprovals[0];
+            setTaskApprovals((list) => list.slice(1));
+            api.answerApproval(req.id, a).catch(() => {});
+          }}
+        />
+      )}
     </div>
   );
 }

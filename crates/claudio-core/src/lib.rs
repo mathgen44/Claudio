@@ -6,6 +6,7 @@ pub mod db;
 pub mod logging;
 pub mod paths;
 pub mod secrets;
+pub mod tasks;
 pub mod usage;
 
 pub use config::Config;
