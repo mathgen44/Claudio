@@ -300,10 +300,21 @@ Mesuré sur la machine de développement (RTX 5070 Ti) : ~440 jetons/s avec Qwen
 - Interface : fenêtre d'autorisation (refus par défaut au clavier), cartes d'outils, pages « Outils et accès » et « Journal d'activité ».
 - Testé en réel : Gemma 4 12B local crée un fichier puis liste l'espace de travail par appels d'outils.
 
+### Phase 4 — livrée (2026-10-26)
+
+- `claudio-agents` : 7 agents fournis en YAML (assistant, planificateur, documentaliste, développeur, archiviste, analyste, relecteur), remplaçables ou complétés par des fichiers utilisateur ; outils autorisés par motif (`web_*`, `mcp__*`).
+- Plans en graphe : sortie structurée du planificateur (schéma JSON ; grammaire pour llama.cpp, `output_config` pour Claude), réparation (agents inconnus, dépendances fantômes, doublons), refus des cycles, étape « Vérification et synthèse » ajoutée automatiquement.
+- Superviseur : étapes prêtes lancées en parallèle, places limitées par le profil (3 en local sur la machine de développement, 4 en cloud) ; llama-server en slots parallèles avec cache KV partagé ; échec d'une étape → étapes dépendantes sautées, synthèse avec ce qui a réussi (statut « partielle ») ; annulation ; reprise après arrêt (état en base, étapes terminées conservées).
+- Chaque étape : boucle d'agent avec ses seuls outils, autorisations « pour cette tâche » remontées à l'interface globale et notifiées, journal d'exécution, sortie en direct, consommation comptée.
+- Planifications cron (5 champs, heure locale), sans empilement ; boucle dans l'application ; icône de zone de notification, fenêtre masquée à la fermeture, notifications Windows.
+- Interface : page « Agents » (lancement, liste, graphe des étapes en direct, détails, résultat, reprise), planifications avec préréglages, catalogue d'agents.
+- Testé en réel : objectif à deux créations indépendantes → deux étapes « développeur » simultanées sur Gemma 4 12B, puis relecture qui relit les fichiers ; ~40 s au total.
+
 ### Reporté
 
+- Édition des agents dans l'interface (aujourd'hui : fichiers YAML).
+- Gestion de plusieurs modèles locaux chargés en même temps (un modèle partagé par les agents pour l'instant).
 - Lecture des PDF et documents Office (avec la phase 5, RAG).
 - Isolement réseau des commandes (nécessiterait AppContainer ou une règle de pare-feu).
-- Gestion de plusieurs modèles locaux chargés en même temps (LRU sur la mémoire vidéo) : utile surtout avec les agents parallèles, prévue avec la phase 4.
 - Téléchargements segmentés en parallèle.
-- Icône de zone de notification, raccourci global.
+- Raccourci clavier global.

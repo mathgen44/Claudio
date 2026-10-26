@@ -5,7 +5,7 @@ tourner des modèles de langage sur ta machine, en s'adaptant à sa puissance.
 
 Voir [PLAN.md](PLAN.md) pour la vision complète et la feuille de route.
 
-## État actuel (phases 0 à 3)
+## État actuel (phases 0 à 4)
 
 - Détection du matériel (processeur, mémoire, cartes graphiques via DXGI et NVML) et profil de machine S / M / L / XL.
 - Catalogue de modèles GGUF (Qwen 3.5, Gemma 4, Qwen 3.6/3.8…) classés selon ce qui tient en mémoire.
@@ -22,6 +22,9 @@ Voir [PLAN.md](PLAN.md) pour la vision complète et la feuille de route.
 - Permissions : rien n'est accessible par défaut ; dossiers en lecture ou lecture/écriture, sites, outils MCP, accordés une fois, pour la conversation ou toujours. Suppression, remplacement de fichier (avec sauvegarde) et commandes toujours confirmés ; emplacements sensibles inaccessibles ; réseau local refusé par défaut.
 - Bac à sable des commandes : PowerShell en intégrité basse (écriture limitée à l'espace de travail), job Windows (délai, mémoire, processus), variables secrètes retirées.
 - Journal d'activité en ajout seul, chaîné par empreintes SHA-256, consultable dans l'application.
+- Agents décrits en YAML (7 fournis, personnalisables dans `%APPDATA%\Claudio\agents`) : consignes, outils autorisés, modèle préféré.
+- Tâches de fond : le planificateur découpe l'objectif en graphe d'étapes, exécutées en parallèle selon la machine, puis vérifiées et synthétisées ; reprise après interruption.
+- Planifications cron, notifications Windows, icône dans la zone de notification (fermer la fenêtre ne coupe pas les tâches).
 
 ## Développement
 
@@ -49,7 +52,7 @@ Piloter le cœur sans interface :
 cargo run -p claudio-app --example cli -- recommend
 ```
 
-Autres commandes de l'outil : `status`, `runtime`, `install <id> <quant>`, `search <texte>`, `repo <auteur/dépôt>`, `usage`, `chat "<texte>"`.
+Autres commandes de l'outil : `status`, `runtime`, `install <id> <quant>`, `use <modèle>`, `search <texte>`, `repo <auteur/dépôt>`, `usage`, `chat "<texte>"`, `task "<objectif>"`.
 
 Tests et vérifications (identiques à la CI) :
 
@@ -83,7 +86,9 @@ python -I scripts/update_catalog.py
 | `crates/claudio-llm` | llama.cpp (installation, processus), Ollama, flux OpenAI et Anthropic, fournisseurs distants |
 | `crates/claudio-perms` | Moteur de permissions, normalisation des chemins, bac à sable PowerShell |
 | `crates/claudio-tools` | Outils (fichiers, web, PowerShell) et client MCP |
-| `crates/claudio-app` | Services partagés par l'application et l'outil : routeur, boucle d'agent, hub, cloud, accès |
+| `crates/claudio-agents` | Définitions d'agents (YAML) et plans en graphe |
+| `crates/claudio-app` | Services partagés par l'application et l'outil : routeur, boucle d'agent, tâches, planifications, hub, cloud, accès |
+| `agents/` | Agents fournis |
 | `apps/desktop` | Application Tauri 2 (React + TypeScript + Tailwind) |
 | `catalog/` | Catalogue des modèles recommandés |
 

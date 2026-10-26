@@ -115,6 +115,55 @@ async fn main() -> Result<()> {
             })?;
             println!("modèle actif : {key}");
         }
+        ["task", objective] => {
+            // Toute demande d'autorisation est refusée : la tâche doit se contenter de
+            // l'espace de travail.
+            let app2 = app.clone();
+            app.set_event_sink(std::sync::Arc::new(move |e| {
+                if let claudio_app::AppEvent::Approval { id, approval, .. } = e {
+                    println!(
+                        "[refusé automatiquement : {} {}]",
+                        approval.title, approval.detail
+                    );
+                    app2.answer_approval(&id, Answer::Deny).ok();
+                }
+            }));
+            let task = app.start_task(objective, "plan", None)?;
+            let mut last = String::new();
+            loop {
+                tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+                let d = app.task_detail(&task.id)?;
+                let line = d
+                    .steps
+                    .iter()
+                    .map(|s| format!("{}[{}:{:?}]", s.step_id, s.agent, s.status))
+                    .collect::<Vec<_>>()
+                    .join(" ");
+                if line != last {
+                    println!("{:?} {line}", d.task.status);
+                    last = line;
+                }
+                if !d.task.status.is_active() {
+                    for s in &d.steps {
+                        println!(
+                            "\n--- {} ({}, {}) ---\n{}{}",
+                            s.title,
+                            s.agent,
+                            s.model.clone().unwrap_or_default(),
+                            s.log,
+                            s.output.clone().or(s.error.clone()).unwrap_or_default()
+                        );
+                    }
+                    println!(
+                        "\n=== Résultat ({:?}, {} jetons) ===\n{}",
+                        d.task.status,
+                        d.task.tokens,
+                        d.task.result.unwrap_or_default()
+                    );
+                    break;
+                }
+            }
+        }
         ["usage"] => println!("{}", serde_json::to_string_pretty(&app.usage_report()?)?),
         ["chat", text] => {
             let session = app.create_session()?;

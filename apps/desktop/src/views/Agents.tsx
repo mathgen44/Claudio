@@ -201,7 +201,7 @@ function Tasks({ agents, onError }: { agents: AgentsView | null; onError: (e: st
       <Card className="space-y-3">
         <textarea
           className={`${input} min-h-20 w-full`}
-          placeholder="Objectif, ex. « Compare les trois dernières factures d'électricité de D:\\Documents\\Factures et propose comment réduire la consommation »"
+          placeholder="Objectif, ex. « Compare les trois dernières factures d'électricité de D:\Documents\Factures et propose comment réduire la consommation »"
           value={objective}
           onChange={(e) => setObjective(e.target.value)}
         />
