@@ -1,6 +1,6 @@
 // Conversations : liste des sessions, fil de messages en continu, saisie.
 
-import { Brain, ChevronRight, Cloud, Cpu, Loader2, MessageSquarePlus, Mic, Pencil, Send, Square, Trash2, Volume2, VolumeX } from "lucide-react";
+import { Brain, ChevronRight, Cloud, Cpu, FileText, Loader2, MessageSquarePlus, Mic, Paperclip, Pencil, Send, Square, Trash2, Upload, Volume2, VolumeX, X } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
@@ -8,8 +8,12 @@ import {
   activeLabel,
   api,
   formatUsd,
+  inTauri,
   routingLabels,
+  splitAttachments,
+  withAttachments,
   type ApprovalRequest,
+  type Attachment,
   type Config,
   type Message,
   type RoutingMode,
@@ -96,6 +100,34 @@ export function Chat({ onOpenModels }: { onOpenModels: () => void }) {
   const [level, setLevel] = useState(0);
   const [speaking, setSpeaking] = useState(false);
   const dictation = useRef<Dictation | null>(null);
+  const [files, setFiles] = useState<Attachment[]>([]);
+  const [reading, setReading] = useState(0);
+  const [dragging, setDragging] = useState(false);
+
+  /** Joint des fichiers (chemins dans l'application, fichiers en mémoire dans le navigateur). */
+  const attach = useCallback(async (dropped: { paths: string[] } | { files: File[] }) => {
+    const jobs: Promise<Attachment>[] =
+      "paths" in dropped ? dropped.paths.map(api.readAttachment) : dropped.files.map(api.attachmentFromFile);
+    setReading((n) => n + jobs.length);
+    const errors: string[] = [];
+    await Promise.all(
+      jobs.map((j) =>
+        j
+          .then((a) => setFiles((f) => (f.some((x) => x.path === a.path) ? f : [...f, a])))
+          .catch((e) => errors.push(String(e)))
+          .finally(() => setReading((n) => n - 1)),
+      ),
+    );
+    setError(errors.length ? errors.join("\n") : null);
+  }, []);
+
+  useEffect(() => api.onFileDrop({ onHover: setDragging, onDrop: attach }), [attach]);
+
+  const pickFiles = async () => {
+    if (!inTauri) return;
+    const paths = await api.pickFiles();
+    if (paths.length) attach({ paths });
+  };
 
   useEffect(() => {
     api.voiceStatus().then(setVoice);
@@ -153,10 +185,12 @@ export function Chat({ onOpenModels }: { onOpenModels: () => void }) {
   };
 
   const send = async (override?: string, spoken = false) => {
-    const text = (override ?? input).trim();
-    if (!text || pending) return;
+    const typed = (override ?? input).trim();
+    if ((!typed && !files.length) || pending || reading) return;
+    const text = withAttachments(typed, files);
     setError(null);
     if (override === undefined) setInput("");
+    setFiles([]);
     const sid = current ?? (await newSession(true));
     setPending({ user: text, reasoning: "", content: "", tools: [] });
     try {
@@ -288,7 +322,14 @@ export function Chat({ onOpenModels }: { onOpenModels: () => void }) {
         </nav>
       </aside>
 
-      <section className="flex min-w-0 flex-1 flex-col">
+      <section className="relative flex min-w-0 flex-1 flex-col">
+        {dragging && (
+          <div className="pointer-events-none absolute inset-3 z-20 flex flex-col items-center justify-center gap-2 rounded-2xl border-2 border-dashed border-[var(--accent)] bg-[var(--bg)]/85 text-[var(--accent)]">
+            <Upload size={28} />
+            <p className="font-medium">Déposez vos fichiers pour les joindre au message</p>
+            <p className="text-sm text-[var(--muted)]">Texte, PDF, Word, Excel, PowerPoint, OpenDocument, HTML</p>
+          </div>
+        )}
         <header className="flex items-center justify-between gap-3 border-b border-[var(--border)] px-5 py-3">
           <button className="flex items-center gap-2 text-sm hover:text-[var(--accent)]" onClick={onOpenModels}>
             <span
@@ -373,7 +414,30 @@ export function Chat({ onOpenModels }: { onOpenModels: () => void }) {
         </div>
 
         <footer className="border-t border-[var(--border)] px-5 py-4">
+          {(files.length > 0 || reading > 0) && (
+            <div className="mx-auto mb-2 flex max-w-3xl flex-wrap gap-2">
+              {files.map((f) => (
+                <FileChip
+                  key={f.path}
+                  name={f.name}
+                  title={`${f.path}${f.truncated ? " — trop long : seul le début est joint" : ""}`}
+                  note={f.truncated ? "début seulement" : undefined}
+                  onRemove={() => setFiles((l) => l.filter((x) => x.path !== f.path))}
+                />
+              ))}
+              {reading > 0 && (
+                <span className="flex items-center gap-1.5 rounded-lg border border-[var(--border)] px-2.5 py-1 text-sm text-[var(--muted)]">
+                  <Loader2 size={13} className="animate-spin" /> Lecture…
+                </span>
+              )}
+            </div>
+          )}
           <div className="mx-auto flex max-w-3xl items-end gap-2 rounded-xl border border-[var(--border)] bg-[var(--panel)] p-2 focus-within:border-[var(--accent)]">
+            {inTauri && (
+              <Button variant="ghost" onClick={pickFiles} disabled={!!noModel} aria-label="Joindre des fichiers" title="Joindre des fichiers (ou glissez-les dans la fenêtre)">
+                <Paperclip size={16} />
+              </Button>
+            )}
             <textarea
               className="max-h-48 min-h-10 flex-1 resize-none bg-transparent px-2 py-2 outline-none"
               rows={1}
@@ -412,7 +476,7 @@ export function Chat({ onOpenModels }: { onOpenModels: () => void }) {
                 <Square size={16} />
               </Button>
             ) : (
-              <Button variant="primary" onClick={() => send()} disabled={!input.trim() || !!noModel} aria-label="Envoyer">
+              <Button variant="primary" onClick={() => send()} disabled={(!input.trim() && !files.length) || reading > 0 || !!noModel} aria-label="Envoyer">
                 <Send size={16} />
               </Button>
             )}
@@ -455,11 +519,21 @@ function Bubble({
   meta?: Message;
 }) {
   if (role === "user") {
+    const { text, files } = splitAttachments(content);
     return (
-      <div className="flex justify-end">
-        <div className="max-w-[80%] rounded-2xl rounded-br-md bg-[var(--accent)] px-4 py-2.5 whitespace-pre-wrap text-[var(--accent-text)]">
-          {content}
-        </div>
+      <div className="flex flex-col items-end gap-1.5">
+        {files.length > 0 && (
+          <div className="flex max-w-[80%] flex-wrap justify-end gap-1.5">
+            {files.map((f, i) => (
+              <FileChip key={i} name={f} />
+            ))}
+          </div>
+        )}
+        {text && (
+          <div className="max-w-[80%] rounded-2xl rounded-br-md bg-[var(--accent)] px-4 py-2.5 whitespace-pre-wrap text-[var(--accent-text)]">
+            {text}
+          </div>
+        )}
       </div>
     );
   }
@@ -489,6 +563,24 @@ function Bubble({
         </p>
       )}
     </div>
+  );
+}
+
+function FileChip({ name, title, note, onRemove }: { name: string; title?: string; note?: string; onRemove?: () => void }) {
+  return (
+    <span
+      className="flex max-w-64 items-center gap-1.5 rounded-lg border border-[var(--border)] bg-[var(--panel)] px-2.5 py-1 text-sm"
+      title={title ?? name}
+    >
+      <FileText size={13} className="shrink-0 text-[var(--accent)]" />
+      <span className="truncate">{name}</span>
+      {note && <span className="shrink-0 text-xs text-[var(--muted)]">· {note}</span>}
+      {onRemove && (
+        <button className="shrink-0 text-[var(--muted)] hover:text-[var(--danger)]" onClick={onRemove} aria-label={`Retirer ${name}`}>
+          <X size={13} />
+        </button>
+      )}
+    </span>
   );
 }
 

@@ -208,6 +208,11 @@ async fn send_message(
 }
 
 #[tauri::command]
+async fn read_attachment(app: App<'_>, path: String) -> CmdResult<claudio_app::Attachment> {
+    app.read_attachment(&path).await.map_err(err)
+}
+
+#[tauri::command]
 fn cancel_chat(app: App<'_>, session_id: String) {
     app.cancel_chat(&session_id);
 }
@@ -824,6 +829,7 @@ pub fn run() {
             list_messages,
             send_message,
             cancel_chat,
+            read_attachment,
             set_session_route,
             hf_search,
             hf_repo,

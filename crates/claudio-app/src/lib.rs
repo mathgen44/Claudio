@@ -3,6 +3,7 @@
 //! n'en sont que des façades.
 
 mod access;
+mod attachments;
 mod cloud;
 mod conversation;
 mod hub;
@@ -31,6 +32,7 @@ use claudio_models::{
 use serde::Serialize;
 
 pub use access::AccessOverview;
+pub use attachments::Attachment;
 pub use claudio_agents;
 pub use claudio_core;
 pub use claudio_hw;

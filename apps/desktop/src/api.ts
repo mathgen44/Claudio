@@ -3,6 +3,7 @@
 
 import { Channel, invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
+import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import { mockInvoke, mockListen } from "./mock";
 
@@ -156,6 +157,45 @@ export interface VoiceStatus {
   stt_model: string;
   dictation_missing: string[];
   wake_missing: string[];
+}
+
+/** Fichier joint à un message : son texte est extrait sur place. */
+export interface Attachment {
+  name: string;
+  path: string;
+  kind: string;
+  text: string;
+  truncated: boolean;
+}
+
+const escapeAttr = (s: string) => s.replace(/&/g, "&amp;").replace(/"/g, "&quot;");
+const unescapeAttr = (s: string) => s.replace(/&quot;/g, '"').replace(/&amp;/g, "&");
+
+/** Message envoyé au modèle : le texte, suivi du contenu des fichiers joints. */
+export function withAttachments(text: string, files: Attachment[]): string {
+  const blocks = files.map(
+    (f) =>
+      `<fichier nom="${escapeAttr(f.name)}" type="${f.kind}"${f.truncated ? ' tronqué="oui"' : ""}>\n${f.text}\n</fichier>`,
+  );
+  return [text, ...blocks].filter(Boolean).join("\n\n");
+}
+
+const FILE_BLOCK = /\n*<fichier nom="([^"]*)"[^>]*>\n[\s\S]*?\n<\/fichier>/g;
+
+/** Sépare un message de l'utilisateur en texte et noms des fichiers joints. */
+export function splitAttachments(content: string): { text: string; files: string[] } {
+  const files: string[] = [];
+  const text = content.replace(FILE_BLOCK, (_, name: string) => {
+    files.push(unescapeAttr(name));
+    return "";
+  });
+  return { text: text.trim(), files };
+}
+
+export interface FileDropHandlers {
+  onHover: (hovering: boolean) => void;
+  /** Application : chemins des fichiers ; navigateur : fichiers lus en mémoire. */
+  onDrop: (files: { paths: string[] } | { files: File[] }) => void;
 }
 
 export interface Transcript {
@@ -679,6 +719,57 @@ export const api = {
     return () => {
       un.then((f) => f());
     };
+  },
+  readAttachment: (path: string) => call<Attachment>("read_attachment", { path }),
+  /** Fichier lu par le navigateur (aperçu hors de l'application). */
+  attachmentFromFile: async (f: File): Promise<Attachment> => ({
+    name: f.name,
+    path: f.name,
+    kind: "texte",
+    text: (await f.text()).slice(0, 40_000),
+    truncated: f.size > 40_000,
+  }),
+  /** Glisser-déposer de fichiers sur la fenêtre ; renvoie la fonction de désabonnement. */
+  onFileDrop: (h: FileDropHandlers): (() => void) => {
+    if (!inTauri) {
+      const over = (e: DragEvent) => {
+        if (!e.dataTransfer?.types.includes("Files")) return;
+        e.preventDefault();
+        h.onHover(true);
+      };
+      const leave = (e: DragEvent) => e.relatedTarget === null && h.onHover(false);
+      const drop = (e: DragEvent) => {
+        if (!e.dataTransfer?.files.length) return;
+        e.preventDefault();
+        h.onHover(false);
+        h.onDrop({ files: [...e.dataTransfer.files] });
+      };
+      window.addEventListener("dragover", over);
+      window.addEventListener("dragleave", leave);
+      window.addEventListener("drop", drop);
+      return () => {
+        window.removeEventListener("dragover", over);
+        window.removeEventListener("dragleave", leave);
+        window.removeEventListener("drop", drop);
+      };
+    }
+    const un = getCurrentWebview().onDragDropEvent((e) => {
+      const p = e.payload;
+      if (p.type === "enter") h.onHover(p.paths.length > 0);
+      else if (p.type === "leave") h.onHover(false);
+      else if (p.type === "drop") {
+        h.onHover(false);
+        if (p.paths.length) h.onDrop({ paths: p.paths });
+      }
+    });
+    return () => {
+      un.then((f) => f());
+    };
+  },
+  /** Sélecteur de fichiers à joindre (chemins). */
+  pickFiles: async (): Promise<string[]> => {
+    const r = await openDialog({ multiple: true, title: "Joindre des fichiers" });
+    return r ?? [];
   },
   /** Sélecteur de dossier natif (saisie manuelle en mode simulé). */
   pickFolder: async (): Promise<string | null> => {

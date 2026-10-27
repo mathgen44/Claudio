@@ -383,7 +383,9 @@ impl Claudio {
 
         let cfg = self.config();
         let tools = self.tool_defs(|_| true).await;
-        let extra = self.knowledge_context(text, !tools.is_empty()).await;
+        // Le contenu des fichiers joints ne sert ni au rappel ni aux souvenirs.
+        let typed = crate::attachments::strip(text);
+        let extra = self.knowledge_context(&typed, !tools.is_empty()).await;
         let mut messages = vec![ChatMessage::text(
             "system",
             self.system_prompt(&cfg.system_prompt, session_id, !tools.is_empty()) + &extra,
@@ -484,11 +486,7 @@ impl Claudio {
             },
         )?;
         if !run.cancelled && !run.refused {
-            self.spawn_memory_extraction(
-                session_id.to_owned(),
-                text.to_owned(),
-                run.content.clone(),
-            );
+            self.spawn_memory_extraction(session_id.to_owned(), typed, run.content.clone());
         }
         Ok(Reply {
             message,
@@ -744,6 +742,11 @@ pub(crate) fn model_label(run: &Run) -> String {
 /// Titre court tiré du premier message.
 pub(crate) fn title_from(text: &str) -> String {
     let line = text.lines().next().unwrap_or(text).trim();
+    // Message composé seulement de fichiers joints : le nom du premier.
+    let line = line
+        .strip_prefix("<fichier nom=\"")
+        .and_then(|l| l.split('"').next())
+        .unwrap_or(line);
     let mut title: String = line.chars().take(48).collect();
     if line.chars().count() > 48 {
         title.push('…');
@@ -763,6 +766,10 @@ mod tests {
     fn titles() {
         assert_eq!(title_from("Bonjour\nsuite"), "Bonjour");
         assert!(title_from(&"a".repeat(100)).ends_with('…'));
+        assert_eq!(
+            title_from("<fichier nom=\"Bilan.pdf\" type=\"pdf\">\nx"),
+            "Bilan.pdf"
+        );
     }
 
     #[test]
