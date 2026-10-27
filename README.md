@@ -1,71 +1,165 @@
-# Claudio
+<div align="center">
 
-Assistant personnel pour Windows, **local d'abord** : il choisit, télécharge et fait
-tourner des modèles de langage sur ta machine, en s'adaptant à sa puissance.
+# 🎩 Claudio
 
-Voir [PLAN.md](PLAN.md) pour la vision complète et la feuille de route.
+**Votre assistant personnel, qui tourne sur votre ordinateur.**
 
-## État actuel (phases 0 à 6)
+Claudio discute, cherche dans vos documents, range vos fichiers, fait des recherches sur le web,
+se souvient de ce qui compte pour vous et vous répond à la voix — avec des modèles d'IA
+qui fonctionnent **chez vous**, sans abonnement et sans envoyer vos données ailleurs.
 
-- Détection du matériel (processeur, mémoire, cartes graphiques via DXGI et NVML) et profil de machine S / M / L / XL.
-- Catalogue de modèles GGUF (Qwen 3.5, Gemma 4, Qwen 3.6/3.8…) classés selon ce qui tient en mémoire.
-- Téléchargement depuis Hugging Face avec reprise après coupure et vérification SHA-256.
-- Installation automatique de llama.cpp (CUDA, Vulkan ou processeur selon la carte), chargement auto-ajusté à la mémoire libre.
-- Réutilisation d'Ollama s'il est installé.
-- Conversations en continu, historique SQLite, réflexion (« thinking ») affichable.
-- Écrans : Mise en route, Conversations, Modèles, Cloud et budgets, Paramètres. Jetons rangés dans le Gestionnaire d'identifiants Windows.
-- Recherche sur Hugging Face : tout dépôt GGUF, variantes découpées, estimation GPU / hybride / processeur (métadonnées GGUF, détection des mélanges d'experts), licence à accepter si elle n'est pas libre.
-- Fournisseurs distants : Anthropic (API Messages native), OpenAI, Mistral, Gemini, OpenRouter et toute API compatible OpenAI.
-- Routeur local / automatique / cloud, réglable par conversation, avec repli quand une cible échoue avant de répondre.
-- Coûts par message, consommation par modèle, plafonds journalier et mensuel qui bloquent le cloud.
-- Outils de l'assistant : fichiers (lister, lire, chercher, écrire, déplacer, corbeille), web (page, recherche), PowerShell, serveurs MCP (stdio et HTTP).
-- Permissions : rien n'est accessible par défaut ; dossiers en lecture ou lecture/écriture, sites, outils MCP, accordés une fois, pour la conversation ou toujours. Suppression, remplacement de fichier (avec sauvegarde) et commandes toujours confirmés ; emplacements sensibles inaccessibles ; réseau local refusé par défaut.
-- Bac à sable des commandes : PowerShell en intégrité basse (écriture limitée à l'espace de travail), job Windows (délai, mémoire, processus), variables secrètes retirées.
-- Journal d'activité en ajout seul, chaîné par empreintes SHA-256, consultable dans l'application.
-- Agents décrits en YAML (7 fournis, personnalisables dans `%APPDATA%\Claudio\agents`) : consignes, outils autorisés, modèle préféré.
-- Tâches de fond : le planificateur découpe l'objectif en graphe d'étapes, exécutées en parallèle selon la machine, puis vérifiées et synthétisées ; reprise après interruption.
-- Planifications cron, notifications Windows, icône dans la zone de notification (fermer la fenêtre ne coupe pas les tâches).
-- Mémoire à long terme : souvenirs rappelés dans les réponses, retenus automatiquement (modèle local) ou à la demande, consultables, modifiables, épinglables et supprimables.
-- Index des dossiers autorisés (texte, PDF, Word, Excel, PowerPoint, OpenDocument) : recherche hybride sens + mots (Qwen3-Embedding local, sqlite-vec, FTS5), mise à jour automatique à chaque modification.
-- Compétences apprises : après une tâche réussie, une procédure réutilisable est proposée ; validée, l'assistant s'en sert.
-- Voix, entièrement locale : dictée (whisper.cpp, modèle choisi selon la machine), mot d'éveil « Claudio » (facultatif), lecture des réponses par les voix Windows ou Piper.
-- Canal Telegram : parler à Claudio depuis son téléphone, conversations jumelées par code, autorisations par boutons.
-- Installateur Windows (NSIS, sans droits administrateur) et mise à jour automatique signée.
-- Démarrage avec Windows (facultatif, Paramètres › Démarrage) : Claudio se lance caché dans la zone de notification.
+[**⬇️ Télécharger pour Windows**](https://github.com/mathgen44/Claudio/releases/latest)
 
-## Installation
+Windows 10 ou 11 · 64 bits · aucun droit administrateur nécessaire
 
-Lancer `Claudio_<version>_x64-setup.exe` (publié dans les versions GitHub, ou produit dans `target/release/bundle/nsis`). Claudio s'installe pour l'utilisateur courant dans `%LOCALAPPDATA%\Claudio`, avec un raccourci dans le menu Démarrer ; il se désinstalle depuis Paramètres Windows › Applications. Les données (modèles, conversations, réglages) sont conservées à la désinstallation.
+</div>
 
-## Développement
+---
 
-Prérequis : Rust (stable, MSVC), Node 20+, Visual Studio Build Tools, WebView2 (inclus dans Windows 11).
+## ✨ Ce que Claudio sait faire
+
+| | |
+|---|---|
+| 💬 **Discuter** | Une conversation fluide, en français, avec un modèle choisi automatiquement selon la puissance de votre PC. |
+| 🧠 **Se souvenir** | Il retient vos préférences et les faits importants. Vous voyez tout, vous corrigez ou effacez quand vous voulez. |
+| 📚 **Lire vos documents** | Donnez-lui un dossier : il retrouve l'information dans vos PDF, Word, Excel, PowerPoint et fichiers texte. |
+| 🗂️ **Agir sur votre PC** | Lire, créer, déplacer des fichiers, chercher sur le web, lancer des commandes — **uniquement avec votre accord**. |
+| 🤖 **Travailler en équipe** | Pour une demande complexe, plusieurs agents spécialisés se répartissent le travail, en parallèle, même fenêtre fermée. |
+| ⏰ **Planifier** | « Chaque lundi à 8 h, fais-moi un résumé de… » : les tâches se lancent toutes seules et vous préviennent. |
+| 🎙️ **Parler** | Dictez vos questions, écoutez les réponses, ou dites simplement « Claudio, … ». La voix reste sur votre machine. |
+| 📱 **Depuis votre téléphone** | Écrivez-lui sur Telegram : il répond depuis votre ordinateur. |
+| ☁️ **Le cloud si besoin** | Facultatif : branchez Claude, GPT, Mistral, Gemini… pour les questions difficiles, avec un plafond de dépense. |
+| 📈 **Apprendre** | Après une tâche réussie, il vous propose d'en faire une « compétence » réutilisable. |
+
+## 🚀 Installation
+
+1. Téléchargez **`Claudio_x.y.z_x64-setup.exe`** depuis la [dernière version](https://github.com/mathgen44/Claudio/releases/latest).
+2. Double-cliquez dessus.
+   Windows peut afficher « Windows a protégé votre ordinateur » : l'installateur n'a pas encore de certificat payant.
+   Cliquez sur **Informations complémentaires**, puis **Exécuter quand même**.
+3. Claudio s'ouvre sur la **mise en route** : il analyse votre machine, vous propose le meilleur modèle et le télécharge. C'est tout !
+
+Claudio se met ensuite à jour tout seul : quand une nouvelle version sort, un bandeau vous propose de l'installer.
+Pour le désinstaller : *Paramètres Windows › Applications*. Vos conversations et modèles sont conservés.
+
+### Quelle machine faut-il ?
+
+| Votre PC | Ce que Claudio fait tourner |
+|---|---|
+| 8 Go de mémoire, sans carte graphique | Un petit modèle, correct pour les tâches simples |
+| 16 Go et une carte graphique de 6 à 8 Go | Un modèle moyen, agréable au quotidien |
+| 32 Go et une carte graphique de 12 Go ou plus | Un grand modèle, rapide et pertinent |
+
+Prévoyez de 3 à 20 Go d'espace disque pour les modèles. Les cartes NVIDIA, AMD et Intel sont prises en charge.
+
+## 🔒 Vos données restent chez vous
+
+- Les modèles tournent **sur votre ordinateur**. Rien ne part sur Internet, sauf si vous activez vous-même un fournisseur cloud ou Telegram.
+- Claudio **n'a accès à rien par défaut**. À chaque fois qu'il veut ouvrir un dossier, visiter un site ou lancer une commande, il vous demande : une fois, pour la conversation, ou toujours.
+- Les suppressions et les commandes sont **toujours** confirmées, et les commandes tournent dans un bac à sable.
+- Un **journal d'activité** infalsifiable garde la trace de tout ce qu'il a fait.
+- Vos clés d'API sont rangées, chiffrées, dans le Gestionnaire d'identifiants Windows.
+
+## 💡 Bien démarrer
+
+- **Poser une question** : écrivez dans la conversation, ou cliquez sur 🎙️ et parlez.
+- **Lui confier vos documents** : *Mémoire › Documents › Ajouter un dossier*.
+- **Une tâche plus longue** : *Agents et tâches › Nouvelle tâche*, décrivez l'objectif, Claudio s'organise.
+- **Le mot d'éveil** : *Voix et Telegram › Mot d'éveil*, puis dites « Claudio, quel temps fera-t-il demain ? ».
+- **Toujours prêt** : *Paramètres › Démarrage* pour le lancer avec Windows, discrètement dans la zone de notification.
+
+### 📱 Claudio sur Telegram
+
+1. Dans Telegram, parlez à **@BotFather**, envoyez `/newbot` et copiez le jeton qu'il vous donne.
+2. Dans Claudio, *Voix et Telegram › Telegram* : collez le jeton, activez le canal, cliquez sur **Jumeler un téléphone**.
+3. Envoyez à votre robot le message `/jumeler 123456` avec le code affiché.
+
+Ensuite, écrivez-lui comme à un ami. `/nouveau` démarre une nouvelle conversation, `/stop` interrompt une réponse.
+Seuls vos téléphones jumelés obtiennent une réponse, et chaque action sensible vous est demandée par des boutons.
+*Les messages transitent par les serveurs de Telegram ; votre ordinateur doit rester allumé.*
+
+## ❓ Questions fréquentes
+
+<details>
+<summary><b>Est-ce gratuit ?</b></summary>
+
+Oui. Les modèles locaux sont gratuits. Seuls les fournisseurs cloud, si vous les activez, vous facturent leur usage — et Claudio respecte les plafonds que vous fixez.
+</details>
+
+<details>
+<summary><b>Faut-il Internet ?</b></summary>
+
+Seulement pour télécharger les modèles et les mises à jour. Ensuite, la conversation, la mémoire, la recherche dans vos documents et la voix fonctionnent hors ligne.
+</details>
+
+<details>
+<summary><b>J'ai déjà Ollama, il sert à quelque chose ?</b></summary>
+
+Oui : Claudio détecte Ollama et vous propose les modèles qui y sont déjà installés.
+</details>
+
+<details>
+<summary><b>Les réponses sont lentes.</b></summary>
+
+Dans *Modèles*, choisissez un modèle plus petit (Claudio indique pour chacun s'il tient dans votre carte graphique). Vous pouvez aussi réduire la taille du contexte dans *Paramètres*.
+</details>
+
+<details>
+<summary><b>Où sont mes données ?</b></summary>
+
+| Emplacement | Contenu |
+|---|---|
+| `%APPDATA%\Claudio\config.toml` | Réglages |
+| `%APPDATA%\Claudio\agents`, `skills` | Agents et compétences personnalisés |
+| `%LOCALAPPDATA%\Claudio\claudio.db` | Conversations, souvenirs, index des documents |
+| `%LOCALAPPDATA%\Claudio\models` | Modèles téléchargés |
+| `%LOCALAPPDATA%\Claudio\voice` | Moteurs et modèles de la voix |
+| `%LOCALAPPDATA%\Claudio\logs` | Journaux |
+</details>
+
+---
+
+## 🛠️ Pour les développeurs
+
+Claudio est écrit en **Rust** (cœur) et **React + TypeScript** (interface), assemblés avec **Tauri 2**.
+Il s'appuie sur [llama.cpp](https://github.com/ggml-org/llama.cpp), [whisper.cpp](https://github.com/ggml-org/whisper.cpp),
+[Piper](https://github.com/rhasspy/piper) et [sqlite-vec](https://github.com/asg017/sqlite-vec).
+La vision et la feuille de route sont dans [PLAN.md](PLAN.md).
+
+<details>
+<summary><b>Compiler et lancer</b></summary>
+
+Prérequis : Rust stable (MSVC), Node 20+, Visual Studio Build Tools, WebView2.
 
 ```bash
 npm --prefix apps/desktop install
 ```
 
-Lancer l'application :
+Application complète :
 
 ```bash
 npm --prefix apps/desktop run tauri dev
 ```
 
-Interface seule dans un navigateur, avec des données simulées (`?ready` pour sauter la mise en route) :
+Interface seule dans un navigateur, avec des données simulées (ajoutez `?ready` à l'adresse pour sauter la mise en route) :
 
 ```bash
 npm --prefix apps/desktop run dev
 ```
 
-Piloter le cœur sans interface :
+Piloter le cœur en ligne de commande :
 
 ```bash
-cargo run -p claudio-app --example cli -- recommend
+cargo run -p claudio-app --example cli -- status
 ```
 
-Autres commandes de l'outil : `status`, `runtime`, `install <id> <quant>`, `use <modèle>`, `search <texte>`, `repo <auteur/dépôt>`, `usage`, `chat "<texte>"`, `task "<objectif>"`, `index <dossier>`, `find "<question>"`, `memories`, `forget all`, `unindex <id>`, `voice`, `voice-install <élément>`, `say "<texte>" <fichier.wav>`, `hear <fichier.wav>`.
+Commandes : `status`, `recommend`, `runtime`, `install <id> <quant>`, `use <modèle>`, `search <texte>`, `repo <auteur/dépôt>`, `usage`, `chat "<texte>"`, `task "<objectif>"`, `index <dossier>`, `find "<question>"`, `memories`, `forget all`, `unindex <id>`, `voice`, `voice-install <élément>`, `say "<texte>" <fichier.wav>`, `hear <fichier.wav>`.
 
-Tests et vérifications (identiques à la CI) :
+La variable `CLAUDIO_HOME` regroupe toutes les données dans un seul dossier (mode portable).
+</details>
+
+<details>
+<summary><b>Tests</b> (identiques à la CI)</summary>
 
 ```bash
 cargo test --workspace
@@ -75,65 +169,52 @@ cargo test --workspace
 cargo clippy --workspace --all-targets -- -D warnings
 ```
 
-Produire l'installateur Windows (NSIS, dans `target/release/bundle/nsis`) ; la variable `TAURI_SIGNING_PRIVATE_KEY` doit contenir la clé privée de signature des mises à jour (gardée hors du dépôt, dans `%USERPROFILE%\.tauri\claudio.key`) :
+```bash
+npm --prefix apps/desktop run typecheck
+```
+</details>
+
+<details>
+<summary><b>Installateur et publication</b></summary>
+
+L'installateur (NSIS, dans `target/release/bundle/nsis`) est signé pour la mise à jour automatique : la variable
+`TAURI_SIGNING_PRIVATE_KEY` doit contenir la clé privée (gardée hors du dépôt, dans `%USERPROFILE%\.tauri\claudio.key`).
 
 ```bash
 npm --prefix apps/desktop run tauri build
 ```
 
-## Publication et mises à jour
+Le workflow GitHub **Publication** (lancement manuel) construit l'installateur et publie une version avec `latest.json`,
+que Claudio consulte au démarrage ; le secret `TAURI_SIGNING_PRIVATE_KEY` du dépôt doit contenir la clé privée.
+Claudio refuse toute mise à jour dont la signature ne correspond pas à la clé publique de `tauri.conf.json`.
 
-Une étiquette `vX.Y.Z` (même numéro que `apps/desktop/src-tauri/tauri.conf.json`) déclenche le workflow `Publication` : il construit l'installateur, le signe pour la mise à jour et publie une version GitHub avec `latest.json`. Le secret `TAURI_SIGNING_PRIVATE_KEY` du dépôt doit contenir la clé privée. Au démarrage, Claudio consulte `latest.json` et propose d'installer la nouvelle version ; il refuse toute archive dont la signature ne correspond pas à la clé publique inscrite dans `tauri.conf.json`.
-
-L'installateur n'est pas signé Authenticode : Windows SmartScreen affiche un avertissement au premier lancement (« Informations complémentaires » puis « Exécuter quand même »).
-
-## Telegram
-
-1. Dans Telegram, créer un robot avec @BotFather (`/newbot`) et copier son jeton.
-2. Dans Claudio › Voix et Telegram, coller le jeton, activer le canal, puis « Jumeler un téléphone ».
-3. Envoyer au robot `/jumeler CODE`. Commandes : `/nouveau` (nouvelle conversation), `/stop` (interrompre).
-
-Le robot ne répond qu'aux conversations privées jumelées. Les messages passent par les serveurs de Telegram ; le travail est fait sur l'ordinateur, qui doit rester allumé avec Claudio lancé. Depuis le téléphone, une autorisation ne peut être donnée que « une fois » ou « pour cette conversation ».
-
-Mettre à jour le catalogue de modèles après avoir modifié `catalog/sources.json` :
+Après une modification de `catalog/sources.json`, régénérer le catalogue :
 
 ```bash
 python -I scripts/update_catalog.py
 ```
+</details>
 
-## Organisation
+<details>
+<summary><b>Organisation du code</b></summary>
 
 | Dossier | Rôle |
 |---|---|
-| `crates/claudio-core` | Chemins, configuration TOML, journaux, secrets Windows, base SQLite |
-| `crates/claudio-hw` | Profileur matériel |
-| `crates/claudio-models` | Catalogue, choix du modèle, Hugging Face, téléchargements, registre |
-| `crates/claudio-llm` | llama.cpp (installation, processus), Ollama, flux OpenAI et Anthropic, fournisseurs distants |
-| `crates/claudio-perms` | Moteur de permissions, normalisation des chemins, bac à sable PowerShell |
+| `crates/claudio-core` | Chemins, configuration, journaux, secrets Windows, base SQLite |
+| `crates/claudio-hw` | Détection du matériel et profil de la machine |
+| `crates/claudio-models` | Catalogue, choix du modèle, Hugging Face, téléchargements |
+| `crates/claudio-llm` | llama.cpp, Ollama, API OpenAI et Anthropic, fournisseurs distants |
+| `crates/claudio-perms` | Permissions, chemins, bac à sable PowerShell |
 | `crates/claudio-tools` | Outils (fichiers, web, PowerShell) et client MCP |
-| `crates/claudio-agents` | Définitions d'agents (YAML) et plans en graphe |
-| `crates/claudio-docs` | Extraction de texte (PDF, Office, OpenDocument, HTML) et découpage en passages |
+| `crates/claudio-agents` | Agents (YAML) et plans en graphe |
+| `crates/claudio-docs` | Extraction de texte (PDF, Office, OpenDocument, HTML) |
 | `crates/claudio-memory` | Index hybride, souvenirs, compétences |
-| `crates/claudio-voice` | Voix : installation de whisper.cpp et Piper, reconnaissance, mot d'éveil, synthèse |
-| `crates/claudio-app` | Services partagés par l'application et l'outil : routeur, boucle d'agent, tâches, planifications, hub, cloud, accès |
-| `agents/` | Agents fournis |
-| `apps/desktop` | Application Tauri 2 (React + TypeScript + Tailwind) |
-| `catalog/` | Catalogue des modèles recommandés |
+| `crates/claudio-voice` | Reconnaissance, mot d'éveil et synthèse vocale |
+| `crates/claudio-app` | Services communs : routeur, agents, tâches, Telegram, voix |
+| `apps/desktop` | Application Tauri 2 (React, TypeScript, Tailwind) |
+| `agents/`, `catalog/` | Agents fournis, catalogue des modèles recommandés |
+</details>
 
-## Données sur la machine
-
-| Emplacement | Contenu |
-|---|---|
-| `%APPDATA%\Claudio\config.toml` | Configuration |
-| `%LOCALAPPDATA%\Claudio\claudio.db` | Conversations |
-| `%LOCALAPPDATA%\Claudio\models` | Modèles téléchargés |
-| `%LOCALAPPDATA%\Claudio\runtimes` | Moteurs llama.cpp |
-| `%LOCALAPPDATA%\Claudio\voice` | Moteurs et modèles de la voix |
-| `%LOCALAPPDATA%\Claudio\logs` | Journaux (niveau réglable avec `CLAUDIO_LOG`) |
-
-La variable `CLAUDIO_HOME` regroupe tout dans un seul dossier (mode portable).
-
-> **Lancé depuis l'application Claude (Windows)** : Claude est une application empaquetée (MSIX) et les
-> programmes qu'elle lance voient `%APPDATA%` et `%LOCALAPPDATA%` redirigés vers
-> `%LOCALAPPDATA%\Packages\Claude_…\LocalCache\`. Les données créées pendant le développement assisté
-> s'y trouvent ; lancé normalement, Claudio utilise les vrais dossiers ci-dessus.
+> **Développement assisté depuis l'application Claude (Windows)** : les programmes lancés par Claude voient
+> `%APPDATA%` et `%LOCALAPPDATA%` redirigés vers `%LOCALAPPDATA%\Packages\Claude_…\LocalCache\`.
+> Lancé normalement, Claudio utilise les vrais dossiers.

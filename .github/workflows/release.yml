@@ -1,10 +1,9 @@
 name: Publication
 
-# Une étiquette `v1.2.3` construit l'installateur Windows signé pour la mise à
-# jour automatique et le publie, avec `latest.json`, dans une version GitHub.
+# Lancement manuel : construit l'installateur Windows signé pour la mise à jour
+# automatique et le publie, avec `latest.json`, dans la version GitHub
+# `v<version de tauri.conf.json>`. Exige le secret TAURI_SIGNING_PRIVATE_KEY.
 on:
-  push:
-    tags: ["v*"]
   workflow_dispatch:
 
 permissions:
