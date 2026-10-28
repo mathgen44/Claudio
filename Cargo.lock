@@ -672,7 +672,7 @@ dependencies = [
 
 [[package]]
 name = "claudio-agents"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "anyhow",
  "serde",
@@ -684,7 +684,7 @@ dependencies = [
 
 [[package]]
 name = "claudio-app"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "anyhow",
  "chrono",
@@ -711,7 +711,7 @@ dependencies = [
 
 [[package]]
 name = "claudio-core"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "anyhow",
  "chrono",
@@ -733,7 +733,7 @@ dependencies = [
 
 [[package]]
 name = "claudio-desktop"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "anyhow",
  "claudio-app",
@@ -754,7 +754,7 @@ dependencies = [
 
 [[package]]
 name = "claudio-docs"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "anyhow",
  "calamine",
@@ -769,7 +769,7 @@ dependencies = [
 
 [[package]]
 name = "claudio-hw"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "anyhow",
  "nvml-wrapper",
@@ -781,7 +781,7 @@ dependencies = [
 
 [[package]]
 name = "claudio-llm"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "anyhow",
  "claudio-core",
@@ -799,7 +799,7 @@ dependencies = [
 
 [[package]]
 name = "claudio-memory"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "anyhow",
  "chrono",
@@ -816,7 +816,7 @@ dependencies = [
 
 [[package]]
 name = "claudio-models"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "anyhow",
  "chrono",
@@ -834,7 +834,7 @@ dependencies = [
 
 [[package]]
 name = "claudio-perms"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "anyhow",
  "base64 0.23.1",
@@ -849,7 +849,7 @@ dependencies = [
 
 [[package]]
 name = "claudio-tools"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "anyhow",
  "chrono",
@@ -873,7 +873,7 @@ dependencies = [
 
 [[package]]
 name = "claudio-voice"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "anyhow",
  "claudio-hw",

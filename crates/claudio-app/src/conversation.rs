@@ -118,6 +118,31 @@ pub(crate) fn parse_mode(s: &str) -> Option<RoutingMode> {
     }
 }
 
+/// Taille permise aux résultats d'outils.
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct ToolRoom {
+    pub max_chars: usize,
+    /// Contexte disponible pour le prompt (modèle local), en jetons.
+    pub prompt_budget: Option<u32>,
+}
+
+/// Plancher : un résultat utile même quand le contexte est presque plein.
+const MIN_TOOL_CHARS: usize = 600;
+
+impl ToolRoom {
+    /// Caractères permis au prochain résultat, la place restante étant partagée
+    /// entre les `pending` résultats encore attendus. Les résultats d'outils
+    /// (HTML, XML, JSON) comptent plus de jetons par caractère que la prose :
+    /// 2,5 caractères par jeton.
+    pub(crate) fn chars_for(&self, msgs: &[ChatMessage], pending: usize) -> usize {
+        let Some(budget) = self.prompt_budget else {
+            return self.max_chars;
+        };
+        let room = budget.saturating_sub(estimate_tokens(msgs)) as usize;
+        (room * 5 / 2 / pending.max(1)).clamp(MIN_TOOL_CHARS, self.max_chars)
+    }
+}
+
 pub(crate) fn clip(s: &str, max: usize) -> String {
     if s.chars().count() <= max {
         return s.to_owned();
@@ -551,11 +576,18 @@ impl Claudio {
             } else {
                 messages.to_vec()
             };
-            // Sur un petit contexte local, les résultats d'outils sont raccourcis.
-            let max_tool_chars = if target == Target::Local {
-                (local_context as usize * 3 / 2).max(2000)
+            // Sur un petit contexte local, les résultats d'outils sont raccourcis
+            // pour tenir dans la place qui reste.
+            let tool_room = if target == Target::Local {
+                ToolRoom {
+                    max_chars: (local_context as usize * 3 / 2).max(2000),
+                    prompt_budget: Some(router::local_prompt_budget(local_context)),
+                }
             } else {
-                60_000
+                ToolRoom {
+                    max_chars: 60_000,
+                    prompt_budget: None,
+                }
             };
             let thinking = lc.thinking.or_else(|| self.thinking_for(target));
             let mut produced = false;
@@ -565,7 +597,7 @@ impl Claudio {
                     msgs,
                     tools,
                     thinking,
-                    max_tool_chars,
+                    tool_room,
                     lc,
                     &mut produced,
                 )
@@ -597,7 +629,7 @@ impl Claudio {
         mut msgs: Vec<ChatMessage>,
         tools: &[ToolDef],
         thinking: Option<bool>,
-        max_tool_chars: usize,
+        tool_room: ToolRoom,
         lc: &LoopCtx<'_>,
         produced: &mut bool,
     ) -> Result<Run> {
@@ -670,7 +702,7 @@ impl Claudio {
                 done.tool_calls.clone(),
                 done.raw.clone(),
             ));
-            for call in &done.tool_calls {
+            for (i, call) in done.tool_calls.iter().enumerate() {
                 (lc.emit)(StreamEvent::ToolCall {
                     id: call.id.clone(),
                     name: call.name.clone(),
@@ -690,7 +722,10 @@ impl Claudio {
                 } else {
                     self.toolbox.call(&ctx, &call.name, &call.arguments).await
                 };
-                let content = clip(&out.content, max_tool_chars);
+                let content = clip(
+                    &out.content,
+                    tool_room.chars_for(&msgs, done.tool_calls.len() - i),
+                );
                 (lc.emit)(StreamEvent::ToolResult {
                     id: call.id.clone(),
                     name: call.name.clone(),
@@ -789,6 +824,27 @@ mod tests {
         assert_eq!(trim_history(&msgs, 10_000).len(), 4);
         // Le dernier message passe toujours.
         assert_eq!(trim_history(&msgs, 1).len(), 2);
+    }
+
+    #[test]
+    fn tool_results_share_remaining_context() {
+        let room = ToolRoom {
+            max_chars: 12_288,
+            prompt_budget: Some(6144),
+        };
+        let empty = [msg("system", 350)];
+        assert_eq!(room.chars_for(&empty, 1), 12_288);
+        // Deux flux attendus : chacun n'a droit qu'à la moitié de la place.
+        let half = room.chars_for(&empty, 2);
+        assert!(half < 7_700 && half > 7_000, "{half}");
+        // Contexte presque plein : le plancher s'applique.
+        let full = [msg("system", 21_000)];
+        assert_eq!(room.chars_for(&full, 1), MIN_TOOL_CHARS);
+        let cloud = ToolRoom {
+            max_chars: 60_000,
+            prompt_budget: None,
+        };
+        assert_eq!(cloud.chars_for(&full, 3), 60_000);
     }
 
     #[test]

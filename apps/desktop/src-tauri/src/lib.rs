@@ -440,7 +440,7 @@ fn task_detail(app: App<'_>, id: String) -> CmdResult<TaskDetail> {
 }
 
 #[tauri::command]
-fn start_task(app: App<'_>, objective: String, mode: String) -> CmdResult<Task> {
+async fn start_task(app: App<'_>, objective: String, mode: String) -> CmdResult<Task> {
     app.inner().start_task(&objective, &mode, None).map_err(err)
 }
 
@@ -450,7 +450,7 @@ fn cancel_task(app: App<'_>, id: String) {
 }
 
 #[tauri::command]
-fn resume_task(app: App<'_>, id: String) -> CmdResult<()> {
+async fn resume_task(app: App<'_>, id: String) -> CmdResult<()> {
     app.inner().resume_task(&id).map_err(err)
 }
 
@@ -487,7 +487,7 @@ fn delete_schedule(app: App<'_>, id: i64) -> CmdResult<()> {
 }
 
 #[tauri::command]
-fn run_schedule_now(app: App<'_>, id: i64) -> CmdResult<String> {
+async fn run_schedule_now(app: App<'_>, id: i64) -> CmdResult<String> {
     app.inner().run_schedule_now(id).map_err(err)
 }
 
@@ -499,24 +499,25 @@ fn knowledge_status(app: App<'_>) -> CmdResult<KnowledgeStatus> {
 }
 
 #[tauri::command]
-fn add_index_source(app: App<'_>, path: String) -> CmdResult<i64> {
+async fn add_index_source(app: App<'_>, path: String) -> CmdResult<i64> {
     app.inner()
         .add_index_source(std::path::Path::new(&path))
         .map_err(err)
 }
 
 #[tauri::command]
-fn remove_index_source(app: App<'_>, id: i64) -> CmdResult<()> {
+async fn remove_index_source(app: App<'_>, id: i64) -> CmdResult<()> {
     app.inner().remove_index_source(id).map_err(err)
 }
 
 #[tauri::command]
-fn reindex_source(app: App<'_>, id: i64) {
+async fn reindex_source(app: App<'_>, id: i64) -> CmdResult<()> {
     app.inner().reindex(id);
+    Ok(())
 }
 
 #[tauri::command]
-fn reindex_all(app: App<'_>) -> CmdResult<()> {
+async fn reindex_all(app: App<'_>) -> CmdResult<()> {
     app.inner().reindex_all().map_err(err)
 }
 
