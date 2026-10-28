@@ -217,3 +217,21 @@ async fn refusal_is_reported_to_the_model() {
         .unwrap();
     assert!(tool_msg["content"].as_str().unwrap().contains("refusé"));
 }
+
+#[tokio::test]
+async fn retries_without_thinking_after_empty_answer() {
+    let chunk =
+        serde_json::json!({"choices": [{"delta": {"reasoning_content": "Je pèse les tags…"}}]});
+    let thinking_only = format!(
+        "data: {chunk}\n\ndata: {{\"choices\":[],\"usage\":{{\"prompt_tokens\":200,\"completion_tokens\":7000}}}}\n\ndata: [DONE]\n\n"
+    );
+    let (_dir, app, bodies) = setup(vec![thinking_only, text_sse("Les 5 tags sont…")]).await;
+    let s = app.create_session().unwrap();
+    let reply = app
+        .send_message(&s.id, "Classe les tags", |_| {})
+        .await
+        .unwrap();
+    assert_eq!(reply.message.content, "Les 5 tags sont…");
+    // Un second appel au modèle, sans réflexion.
+    assert_eq!(bodies.lock().unwrap().len(), 2);
+}

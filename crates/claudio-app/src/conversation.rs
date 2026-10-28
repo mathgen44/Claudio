@@ -633,7 +633,7 @@ impl Claudio {
         lc: &LoopCtx<'_>,
         produced: &mut bool,
     ) -> Result<Run> {
-        let opts = Options {
+        let mut opts = Options {
             thinking,
             tools: tools.to_vec(),
             json_schema: lc.json_schema.clone(),
@@ -687,6 +687,21 @@ impl Claudio {
             if done.cancelled {
                 run.cancelled = true;
                 return Ok(run);
+            }
+            // Le modèle a réfléchi jusqu'à épuiser son contexte sans répondre :
+            // nouvel essai, une seule fois, sans réflexion.
+            if done.content.trim().is_empty()
+                && done.tool_calls.is_empty()
+                && !done.reasoning.is_empty()
+                && !done.refused
+                && opts.thinking != Some(false)
+            {
+                tracing::warn!(
+                    reasoning_chars = done.reasoning.chars().count(),
+                    "réflexion sans réponse : nouvel essai sans réflexion"
+                );
+                opts.thinking = Some(false);
+                continue;
             }
             if done.tool_calls.is_empty() || done.refused {
                 return Ok(run);
