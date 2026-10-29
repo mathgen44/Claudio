@@ -348,7 +348,7 @@ function Documents({ onError }: { onError: (e: string | null) => void }) {
 
       <div className="flex items-center justify-between">
         <p className="text-sm text-[var(--muted)]">
-          Textes, PDF, Word, Excel, PowerPoint et OpenDocument. Les modifications sont prises en compte automatiquement.
+          Textes, PDF (même scannés, par reconnaissance de caractères), Word, Excel, PowerPoint et OpenDocument. Les modifications sont prises en compte automatiquement.
         </p>
         <Button onClick={add}>
           <FolderPlus size={16} /> Indexer un dossier

@@ -335,6 +335,7 @@ mod tests {
             base_url: DEFAULT_BASE_URL.into(),
             model: model.into(),
             api_key: Some("k".into()),
+            lease: None,
         }
     }
 

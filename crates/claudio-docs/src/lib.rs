@@ -1,7 +1,9 @@
 //! Extraction du texte des documents (texte, PDF, Word, Excel, PowerPoint,
-//! OpenDocument, HTML) et découpage en passages pour l'indexation.
+//! OpenDocument, HTML, images par reconnaissance de caractères) et découpage
+//! en passages pour l'indexation.
 
 mod chunk;
+mod ocr;
 mod office;
 
 use std::io::Read;
@@ -71,6 +73,7 @@ pub fn kind_of(path: &Path) -> Option<&'static str> {
         "pptx" | "pptm" => "pptx",
         "odt" | "odp" => "opendocument",
         "html" | "htm" => "html",
+        "png" | "jpg" | "jpeg" | "bmp" | "gif" | "tif" | "tiff" | "webp" => "image",
         e if TEXT_EXT.contains(&e) => "texte",
         _ => return None,
     })
@@ -114,29 +117,60 @@ fn cp1252(b: u8) -> char {
     }
 }
 
+/// En dessous, une page de PDF est tenue pour scannée (sans couche de texte).
+const MIN_PAGE_CHARS: usize = 20;
+
 fn pdf(path: &Path) -> Result<Document> {
     let p = path.to_path_buf();
     // La bibliothèque PDF peut paniquer sur des fichiers malformés.
-    let pages = std::panic::catch_unwind(move || pdf_extract::extract_text_by_pages(&p))
-        .map_err(|_| anyhow::anyhow!("PDF illisible"))?
-        .context("PDF illisible (protégé ou malformé ?)")?;
-    let sections: Vec<Section> = pages
-        .into_iter()
+    let extracted = std::panic::catch_unwind(move || pdf_extract::extract_text_by_pages(&p))
+        .map_err(|_| anyhow::anyhow!("PDF illisible"))
+        .and_then(|r| r.context("PDF illisible (protégé ou malformé ?)"));
+    let (pages, extract_err) = match extracted {
+        Ok(pages) => (pages, None),
+        Err(e) => (Vec::new(), Some(e)),
+    };
+    let has_text = |t: &str| t.chars().filter(|c| !c.is_whitespace()).count() >= MIN_PAGE_CHARS;
+    let mut sections: Vec<(u32, Section)> = pages
+        .iter()
         .enumerate()
-        .filter(|(_, t)| !t.trim().is_empty())
-        .map(|(i, t)| Section {
-            location: Some(format!("page {}", i + 1)),
-            text: t,
+        .filter(|(_, t)| has_text(t))
+        .map(|(i, t)| {
+            let section = Section {
+                location: Some(format!("page {}", i + 1)),
+                text: t.clone(),
+            };
+            (i as u32, section)
         })
         .collect();
-    if sections.is_empty() {
-        bail!(
-            "PDF sans texte (document scanné ? la reconnaissance de caractères n'est pas encore prise en charge)"
-        );
+    // Pages scannées : reconnaissance de caractères.
+    if sections.len() < pages.len() || pages.is_empty() {
+        let scanned = |i: u32| pages.get(i as usize).is_none_or(|t| !has_text(t));
+        match ocr::pdf_pages(path, scanned) {
+            Ok(found) => {
+                sections.extend(found.into_iter().filter(|(_, t)| !t.trim().is_empty()).map(
+                    |(i, text)| {
+                        let section = Section {
+                            location: Some(format!("page {} (texte reconnu)", i + 1)),
+                            text,
+                        };
+                        (i, section)
+                    },
+                ))
+            }
+            Err(e) if sections.is_empty() => {
+                return Err(extract_err.unwrap_or(e).context("PDF sans texte lisible"));
+            }
+            Err(e) => tracing::warn!("reconnaissance des pages scannées : {e:#}"),
+        }
     }
+    if sections.is_empty() {
+        bail!("PDF sans texte (ni couche de texte ni caractères reconnus)");
+    }
+    sections.sort_by_key(|(i, _)| *i);
     Ok(Document {
         kind: "pdf",
-        sections,
+        sections: sections.into_iter().map(|(_, s)| s).collect(),
     })
 }
 
@@ -183,6 +217,13 @@ pub fn extract(path: &Path) -> Result<Document> {
         "pptx" => office::pptx(path)?,
         "opendocument" => Document::single(kind, office::opendocument(path)?),
         "tableur" => spreadsheet(path)?,
+        "image" => {
+            let text = ocr::image(path)?;
+            if text.trim().is_empty() {
+                bail!("aucun texte reconnu dans l'image");
+            }
+            Document::single(kind, text)
+        }
         "html" => Document::single(
             kind,
             html2text::from_read(read_text(path)?.as_bytes(), 120).unwrap_or_default(),
@@ -205,7 +246,8 @@ mod tests {
         assert_eq!(kind_of(Path::new("a/Rapport.PDF")), Some("pdf"));
         assert_eq!(kind_of(Path::new("budget.xlsx")), Some("tableur"));
         assert_eq!(kind_of(Path::new("notes.md")), Some("texte"));
-        assert_eq!(kind_of(Path::new("photo.jpg")), None);
+        assert_eq!(kind_of(Path::new("photo.JPG")), Some("image"));
+        assert_eq!(kind_of(Path::new("archive.zip")), None);
         assert_eq!(kind_of(Path::new("sans_extension")), None);
     }
 

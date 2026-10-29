@@ -29,6 +29,8 @@ pub struct ServerConfig {
     pub parallel: u32,
     /// Serveur d'embeddings : mode de regroupement des vecteurs (`last`, `mean`…).
     pub embedding_pooling: Option<String>,
+    /// Mémoire estimée (poids, cache et calcul), pour la place laissée aux autres modèles.
+    pub memory: u64,
 }
 
 impl ServerConfig {
@@ -203,6 +205,7 @@ impl LlamaServer {
             base_url: format!("http://127.0.0.1:{}/v1", self.port),
             model: self.config.alias.clone(),
             api_key: None,
+            lease: None,
         }
     }
 

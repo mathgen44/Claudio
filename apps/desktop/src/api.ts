@@ -71,7 +71,8 @@ export interface Status {
   profile: MachineProfile;
   runtime: InstalledRuntime | null;
   active_model: ActiveModel | null;
-  loaded_model: string | null;
+  /** Modèles locaux en mémoire, du plus récemment utilisé au plus ancien. */
+  loaded_models: string[];
   ollama_models: OllamaModel[] | null;
   installed_models: InstalledModel[];
   has_hf_token: boolean;
@@ -108,6 +109,8 @@ export type InstallEvent =
 export interface Config {
   models_dir: string | null;
   active_model: ActiveModel | null;
+  /** Modèle local propre à certains agents (sinon le modèle actif). */
+  agent_models: Record<string, ActiveModel>;
   context_size: number | null;
   use_ollama: boolean;
   llama_backend: string | null;
@@ -363,6 +366,10 @@ export interface AgentDef {
   thinking: boolean | null;
   system_prompt: string;
   builtin: boolean;
+  /** Fichier du dossier des agents qui le définit. */
+  file: string | null;
+  /** Ce fichier remplace un agent fourni. */
+  overrides_builtin: boolean;
 }
 
 export interface AgentsView {
@@ -612,6 +619,7 @@ export const api = {
   setActiveModel: (model: ActiveModel) => call<void>("set_active_model", { model }),
   warmUp: () => call<void>("warm_up"),
   config: () => call<Config>("get_config"),
+  setAgentModel: (agentId: string, model: ActiveModel | null) => call<void>("set_agent_model", { agentId, model }),
   updateSettings: (patch: SettingsPatch) => call<Config>("update_settings", { patch }),
   setHfToken: (token: string | null) => call<void>("set_hf_token", { token }),
   openFolder: (which: "logs" | "models" | "data" | "workspace" | "agents" | "skills") => call<void>("open_folder", { which }),
@@ -661,6 +669,10 @@ export const api = {
   removeMcpServer: (id: string) => call<void>("remove_mcp_server", { id }),
   testMcpServer: (id: string) => call<McpTool[]>("test_mcp_server", { id }),
   listAgents: (reload = false) => call<AgentsView>("list_agents", { reload }),
+  saveAgent: ({ builtin: _b, file: _f, overrides_builtin: _o, ...agent }: AgentDef, create: boolean) =>
+    call<AgentsView>("save_agent", { agent, create }),
+  deleteAgent: (id: string) => call<AgentsView>("delete_agent", { id }),
+  availableTools: () => call<[string, string][]>("available_tools"),
   listTasks: () => call<Task[]>("list_tasks"),
   taskDetail: (id: string) => call<TaskDetail>("task_detail", { id }),
   startTask: (objective: string, mode: string) => call<Task>("start_task", { objective, mode }),

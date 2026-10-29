@@ -157,6 +157,44 @@ impl Claudio {
         set
     }
 
+    /// Enregistre un agent (nouveau si `create`) puis recharge le catalogue.
+    pub fn save_agent(&self, agent: &AgentDef, create: bool) -> Result<AgentSet> {
+        self.agents()
+            .save(&self.paths.agents_dir(), agent, create)?;
+        Ok(self.reload_agents())
+    }
+
+    /// Supprime le fichier d'un agent (un agent fourni retrouve son origine).
+    pub fn delete_agent(&self, id: &str) -> Result<AgentSet> {
+        self.agents().remove(&self.paths.agents_dir(), id)?;
+        let set = self.reload_agents();
+        if set.get(id).is_none() {
+            self.update_config(|c| {
+                c.agent_models.remove(id);
+            })?;
+        }
+        Ok(set)
+    }
+
+    /// Outils qu'un agent peut recevoir (nom, description), MCP compris.
+    pub async fn available_tools(&self) -> Vec<(String, String)> {
+        self.toolbox
+            .mcp
+            .configure(self.config().mcp_servers.clone())
+            .await;
+        self.toolbox
+            .specs()
+            .await
+            .into_iter()
+            .map(|s| (s.name, s.description))
+            .chain(
+                self.app_tool_defs()
+                    .into_iter()
+                    .map(|t| (t.name, t.description)),
+            )
+            .collect()
+    }
+
     pub fn list_tasks(&self, limit: u32) -> Result<Vec<Task>> {
         self.db.list_tasks(limit.clamp(1, 500))
     }
@@ -329,7 +367,12 @@ impl Claudio {
                 ),
                 ChatMessage::text("user", plan::planner_prompt(&task.objective, agents)),
             ];
-            let decision = self.route(mode_for(&planner, self.config().routing.mode), &messages)?;
+            let local = self.local_model_for(&planner.id);
+            let decision = self.route(
+                mode_for(&planner, self.config().routing.mode),
+                &messages,
+                local.as_ref(),
+            )?;
             let noop = |_: StreamEvent| {};
             let approver = DenyAll;
             let lc = LoopCtx {
@@ -340,6 +383,7 @@ impl Claudio {
                 max_steps: 1,
                 thinking: Some(false),
                 json_schema: Some(plan::schema(agents)),
+                local_model: local,
             };
             let run = self.answer(&decision, &messages, &[], &lc).await?;
             let cost = self.record_run(&run, None)?;
@@ -574,7 +618,12 @@ impl Claudio {
             ),
             ChatMessage::text("user", user),
         ];
-        let decision = self.route(mode_for(agent, self.config().routing.mode), &messages)?;
+        let local = self.local_model_for(&agent.id);
+        let decision = self.route(
+            mode_for(agent, self.config().routing.mode),
+            &messages,
+            local.as_ref(),
+        )?;
 
         // Une étape attend une place libre selon où elle s'exécute.
         let slots = match decision.target {
@@ -638,6 +687,7 @@ impl Claudio {
             max_steps: agent.max_steps,
             thinking: agent.thinking,
             json_schema: None,
+            local_model: local,
         };
         let run = self.answer(&decision, &messages, &tools, &lc).await?;
         let cost = self.record_run(&run, None)?;

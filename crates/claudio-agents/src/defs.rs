@@ -51,6 +51,12 @@ pub struct AgentDef {
     /// Agent fourni par Claudio (calculé, non lu dans le fichier).
     #[serde(skip_deserializing, default)]
     pub builtin: bool,
+    /// Fichier du dossier utilisateur qui définit l'agent (calculé).
+    #[serde(skip_deserializing, default)]
+    pub file: Option<String>,
+    /// Ce fichier remplace un agent fourni (calculé).
+    #[serde(skip_deserializing, default)]
+    pub overrides_builtin: bool,
 }
 
 fn default_steps() -> usize {
@@ -64,7 +70,10 @@ impl AgentDef {
         Ok(a)
     }
 
-    fn validate(&self) -> Result<()> {
+    pub fn validate(&self) -> Result<()> {
+        if self.name.trim().is_empty() {
+            bail!("l'agent {} n'a pas de nom", self.id);
+        }
         if self.id.is_empty()
             || !self
                 .id
@@ -83,6 +92,19 @@ impl AgentDef {
             bail!("max_steps doit être entre 1 et 50");
         }
         Ok(())
+    }
+
+    /// Texte YAML de l'agent, tel qu'enregistré dans le dossier utilisateur.
+    pub fn to_yaml(&self) -> Result<String> {
+        let mut v = serde_json::to_value(self)?;
+        let obj = v.as_object_mut().expect("objet");
+        for computed in ["builtin", "file", "overrides_builtin"] {
+            obj.remove(computed);
+        }
+        if obj.get("thinking").is_some_and(|t| t.is_null()) {
+            obj.remove("thinking");
+        }
+        Ok(serde_yaml_ng::to_string(&v)?)
     }
 
     /// L'agent a-t-il droit à cet outil ?
@@ -135,7 +157,9 @@ impl AgentSet {
                     .map_err(anyhow::Error::from)
                     .and_then(|t| AgentDef::parse(&t))
                 {
-                    Ok(a) => {
+                    Ok(mut a) => {
+                        a.overrides_builtin = BUILTIN.iter().any(|(id, _)| *id == a.id);
+                        a.file = Some(name);
                         agents.retain(|x| x.id != a.id);
                         agents.push(a);
                     }
@@ -151,6 +175,35 @@ impl AgentSet {
 
     pub fn get(&self, id: &str) -> Option<&AgentDef> {
         self.agents.iter().find(|a| a.id == id)
+    }
+
+    /// Enregistre un agent dans le dossier utilisateur : dans son fichier s'il en a
+    /// un, sinon dans `<id>.yaml`. Un agent fourni ainsi modifié est remplacé.
+    /// `create` : nouvel agent, dont l'identifiant doit être libre.
+    pub fn save(&self, dir: &Path, agent: &AgentDef, create: bool) -> Result<()> {
+        agent.validate()?;
+        let existing = self.get(&agent.id);
+        if create && existing.is_some() {
+            bail!("un agent porte déjà l'identifiant « {} »", agent.id);
+        }
+        let file = existing
+            .and_then(|a| a.file.clone())
+            .unwrap_or_else(|| format!("{}.yaml", agent.id));
+        std::fs::create_dir_all(dir)?;
+        std::fs::write(dir.join(file), agent.to_yaml()?)?;
+        Ok(())
+    }
+
+    /// Supprime le fichier d'un agent : un agent personnalisé disparaît, un agent
+    /// fourni retrouve sa définition d'origine.
+    pub fn remove(&self, dir: &Path, id: &str) -> Result<()> {
+        let agent = self.get(id).context("agent introuvable")?;
+        let file = agent
+            .file
+            .as_ref()
+            .context("agent fourni par Claudio : il n'a pas de fichier à supprimer")?;
+        std::fs::remove_file(dir.join(file))?;
+        Ok(())
     }
 
     /// Agents pouvant recevoir une étape (le planificateur ne s'attribue pas d'étape).
@@ -223,5 +276,48 @@ mod tests {
         assert!(!t.builtin);
         assert_eq!(set.get("coder").unwrap().name, "Mon dev");
         assert_eq!(set.errors.len(), 2);
+        assert_eq!(t.file.as_deref(), Some("traducteur.yaml"));
+        assert!(set.get("coder").unwrap().overrides_builtin && !t.overrides_builtin);
+    }
+
+    #[test]
+    fn save_and_remove() {
+        let dir = tempfile::tempdir().unwrap();
+        let set = AgentSet::load(Some(dir.path()));
+        // Agent fourni modifié : un fichier le remplace.
+        let mut coder = set.get("coder").unwrap().clone();
+        coder.name = "Développeur maison".into();
+        coder.thinking = Some(true);
+        set.save(dir.path(), &coder, false).unwrap();
+        let mut new = coder.clone();
+        new.id = "traducteur".into();
+        new.system_prompt = "Ligne 1
+Ligne « 2 » : guillemets \"ok\"
+"
+        .into();
+        set.save(dir.path(), &new, true).unwrap();
+        assert!(set.save(dir.path(), &coder, true).is_err());
+
+        let set = AgentSet::load(Some(dir.path()));
+        assert!(set.errors.is_empty(), "{:?}", set.errors);
+        let c = set.get("coder").unwrap();
+        assert_eq!(
+            (c.name.as_str(), c.thinking),
+            ("Développeur maison", Some(true))
+        );
+        assert!(c.overrides_builtin);
+        let t = set.get("traducteur").unwrap();
+        assert_eq!(t.system_prompt, new.system_prompt);
+        assert_eq!(t.tools, coder.tools);
+
+        set.remove(dir.path(), "coder").unwrap();
+        set.remove(dir.path(), "traducteur").unwrap();
+        let set = AgentSet::load(Some(dir.path()));
+        assert_eq!(
+            set.get("coder").unwrap().name,
+            AgentSet::load(None).get("coder").unwrap().name
+        );
+        assert!(set.get("traducteur").is_none());
+        assert!(set.remove(dir.path(), "coder").is_err());
     }
 }

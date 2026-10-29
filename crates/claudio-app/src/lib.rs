@@ -98,7 +98,8 @@ pub struct Status {
     pub runtime: Option<InstalledRuntime>,
     pub active_model: Option<ActiveModel>,
     /// Modèle actuellement chargé en mémoire par llama.cpp.
-    pub loaded_model: Option<String>,
+    /// Modèles locaux en mémoire, du plus récemment utilisé au plus ancien.
+    pub loaded_models: Vec<String>,
     /// `None` si Ollama ne tourne pas (ou est désactivé).
     pub ollama_models: Option<Vec<OllamaModel>>,
     pub installed_models: Vec<InstalledModel>,
@@ -228,7 +229,7 @@ impl Claudio {
             hardware,
             runtime: runtime::installed(&self.paths.runtimes_dir()),
             active_model: cfg.active_model.clone(),
-            loaded_model: self.engine.loaded().await,
+            loaded_models: self.engine.loaded().await,
             ollama_models,
             installed_models: self.registry().list()?,
             has_hf_token: self.hf_token().is_some(),
@@ -355,13 +356,15 @@ impl Claudio {
     }
 
     pub async fn remove_model(&self, key: &str) -> Result<()> {
-        if self.engine.loaded().await.as_deref() == Some(key) {
-            self.engine.unload().await;
-        }
+        self.engine.unload_model(key).await;
         self.registry().remove(key)?;
-        if self.config().active_model == Some(ActiveModel::Local { id: key.to_owned() }) {
-            self.update_config(|c| c.active_model = None)?;
-        }
+        let removed = ActiveModel::Local { id: key.to_owned() };
+        self.update_config(|c| {
+            if c.active_model.as_ref() == Some(&removed) {
+                c.active_model = None;
+            }
+            c.agent_models.retain(|_, m| *m != removed);
+        })?;
         Ok(())
     }
 
@@ -370,10 +373,34 @@ impl Claudio {
         Ok(())
     }
 
+    /// Modèle choisi pour un agent ; sinon `None` (modèle actif).
+    pub(crate) fn local_model_for(&self, agent_id: &str) -> Option<ActiveModel> {
+        self.config().agent_models.get(agent_id).cloned()
+    }
+
+    /// Choisit le modèle local d'un agent (`None` : modèle actif).
+    pub fn set_agent_model(&self, agent_id: &str, model: Option<ActiveModel>) -> Result<()> {
+        self.update_config(|c| match model {
+            Some(m) => {
+                c.agent_models.insert(agent_id.to_owned(), m);
+            }
+            None => {
+                c.agent_models.remove(agent_id);
+            }
+        })?;
+        Ok(())
+    }
+
     /// Prépare le modèle actif et renvoie son point d'accès (chargement si besoin).
     pub async fn active_endpoint(&self) -> Result<Endpoint> {
+        self.endpoint_for(None).await
+    }
+
+    /// Prépare le modèle local donné (sinon le modèle actif) et renvoie son
+    /// point d'accès ; d'autres modèles peuvent rester chargés à côté.
+    pub async fn endpoint_for(&self, model: Option<&ActiveModel>) -> Result<Endpoint> {
         let cfg = self.config();
-        match cfg.active_model.clone() {
+        match model.or(cfg.active_model.as_ref()).cloned() {
             None => bail!("aucun modèle sélectionné : installez-en un depuis l'écran Modèles"),
             Some(ActiveModel::Ollama { name }) => {
                 if ollama::list(&self.http, ollama::DEFAULT_URL)
@@ -393,7 +420,32 @@ impl Claudio {
                 let rt = runtime::installed(&self.paths.runtimes_dir())
                     .context("le moteur llama.cpp n'est pas installé")?;
                 let server = self.server_config(&cfg, &rt, &installed)?;
-                self.engine.ensure(&self.http, server).await
+                let profile = self.hardware().profile();
+                let budget = if server.use_gpu {
+                    profile.vram_budget
+                } else {
+                    profile.ram_budget
+                };
+                self.engine.ensure(&self.http, server, budget).await
+            }
+        }
+    }
+
+    /// Mémoire estimée d'un modèle installé pour un contexte total donné.
+    fn model_memory(&self, profile: &MachineProfile, m: &InstalledModel, context: u32) -> u64 {
+        match self
+            .catalog
+            .get(&m.model_id)
+            .and_then(|c| c.quant(&m.quant).map(|q| (c, q)))
+        {
+            Some((c, q)) => select::memory_needed(c, q, context),
+            None => {
+                let meta = claudio_models::select::ModelMeta {
+                    params_b: m.params_b,
+                    active_params_b: None,
+                    moe: false,
+                };
+                select::estimate_fit(profile, m.size, &m.quant, context, &meta).memory_needed
             }
         }
     }
@@ -412,27 +464,34 @@ impl Claudio {
             .context_size
             .unwrap_or(DEFAULT_CONTEXT)
             .min(model_max.unwrap_or(u32::MAX));
+        // Place gardée pour les autres modèles choisis (agents), s'ils peuvent
+        // tenir ensemble ; sinon ils se relaieront en mémoire.
+        let mut others: Vec<&str> = cfg
+            .agent_models
+            .values()
+            .chain(cfg.active_model.as_ref())
+            .filter_map(|a| match a {
+                ActiveModel::Local { id } if *id != m.key => Some(id.as_str()),
+                _ => None,
+            })
+            .collect();
+        others.sort_unstable();
+        others.dedup();
+        let reserve: u64 = others
+            .iter()
+            .filter_map(|id| self.registry().get(id).ok().flatten())
+            .map(|o| self.model_memory(&profile, &o, ctx))
+            .sum();
+        let reserve = if self.model_memory(&profile, m, ctx) + reserve <= profile.vram_budget {
+            reserve
+        } else {
+            0
+        };
         // Plusieurs agents peuvent interroger le modèle en même temps : le contexte
         // partagé est agrandi tant qu'il tient dans la mémoire vidéo.
         let parallel = profile.max_parallel_agents.max(1) as u32;
-        let fits = |total: u32| -> bool {
-            let meta = claudio_models::select::ModelMeta {
-                params_b: m.params_b,
-                active_params_b: None,
-                moe: false,
-            };
-            let need = match self
-                .catalog
-                .get(&m.model_id)
-                .and_then(|c| c.quant(&m.quant).map(|q| (c, q)))
-            {
-                Some((c, q)) => select::memory_needed(c, q, total),
-                None => {
-                    select::estimate_fit(&profile, m.size, &m.quant, total, &meta).memory_needed
-                }
-            };
-            need <= profile.vram_budget
-        };
+        let fits =
+            |total: u32| self.model_memory(&profile, m, total) + reserve <= profile.vram_budget;
         let total = [parallel, 2]
             .into_iter()
             .map(|k| ctx.saturating_mul(k))
@@ -447,6 +506,7 @@ impl Claudio {
             threads: profile.threads,
             parallel,
             embedding_pooling: None,
+            memory: self.model_memory(&profile, m, total),
         })
     }
 

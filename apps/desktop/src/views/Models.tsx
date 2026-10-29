@@ -80,7 +80,7 @@ export function Models() {
                   <span className="font-medium">{m.name}</span>
                   <Badge>{m.quant}</Badge>
                   {isActive && <Badge tone="accent">Actif</Badge>}
-                  {status.loaded_model === m.key && <Badge tone="ok">En mémoire</Badge>}
+                  {status.loaded_models.includes(m.key) && <Badge tone="ok">En mémoire</Badge>}
                 </div>
                 <p className="text-xs text-[var(--muted)]">
                   {formatBytes(m.size)} · {m.repo}

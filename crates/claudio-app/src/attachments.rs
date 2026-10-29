@@ -122,10 +122,10 @@ mod tests {
         assert_eq!(a.text.chars().count(), MAX_ATTACHMENT_CHARS);
 
         assert!(read(dir.path()).is_err());
-        let img = dir.path().join("photo.jpg");
-        std::fs::write(&img, [0xffu8, 0xd8]).unwrap();
+        let zip = dir.path().join("archive.zip");
+        std::fs::write(&zip, [0x50u8, 0x4b]).unwrap();
         assert!(
-            read(&img)
+            read(&zip)
                 .unwrap_err()
                 .to_string()
                 .contains("non pris en charge")

@@ -39,6 +39,7 @@ const READY = new URLSearchParams(location.search).has("ready");
 const config: Config = {
   models_dir: null,
   active_model: READY ? { source: "local", id: "gemma-4-12b:Q6_K" } : null,
+  agent_models: {},
   context_size: null,
   use_ollama: true,
   llama_backend: null,
@@ -210,7 +211,7 @@ function status(): Status {
     profile: { tier: "L", gpu_index: 0, vram_budget: 11.8 * GB, ram_budget: 34 * GB, max_parallel_agents: 3, threads: 8 },
     runtime,
     active_model: config.active_model,
-    loaded_model: null,
+    loaded_models: [],
     ollama_models: [{ name: "llama3.2:3b", size: 2e9, details: { parameter_size: "3.2B", quantization_level: "Q4_K_M" } }],
     installed_models: installed,
     has_hf_token: false,
@@ -240,8 +241,9 @@ const emitApp = (e: AppEvent) => listeners.forEach((l) => l(e));
 
 const agent = (id: string, name: string, description: string, tools: string[]): AgentDef => ({
   id, name, description, tools, model: "auto", max_steps: 12, thinking: null, system_prompt: "…", builtin: true,
+  file: null, overrides_builtin: false,
 });
-const AGENTS: AgentDef[] = [
+let AGENTS: AgentDef[] = [
   agent("assistant", "Assistant", "Généraliste polyvalent.", ["*"]),
   agent("planner", "Planificateur", "Découpe un objectif en étapes.", []),
   agent("researcher", "Documentaliste", "Recherche d'informations sur le web et dans les fichiers, avec sources.", ["web_search", "web_fetch", "read_file"]),
@@ -345,6 +347,10 @@ export async function mockInvoke<T>(cmd: string, args: Record<string, any> = {})
     }
     case "set_active_model":
       config.active_model = args.model as ActiveModel;
+      return r(undefined);
+    case "set_agent_model":
+      if (args.model) config.agent_models[args.agentId as string] = args.model as ActiveModel;
+      else delete config.agent_models[args.agentId as string];
       return r(undefined);
     case "get_config":
       return r({ ...config });
@@ -478,6 +484,25 @@ export async function mockInvoke<T>(cmd: string, args: Record<string, any> = {})
       ]);
     case "list_agents":
       return r({ agents: AGENTS, errors: [] });
+    case "save_agent": {
+      const a = args.agent as AgentDef;
+      if (args.create && AGENTS.some((x) => x.id === a.id)) throw `un agent porte déjà l'identifiant « ${a.id} »`;
+      const old = AGENTS.find((x) => x.id === a.id);
+      const saved = { ...a, builtin: false, file: old?.file ?? `${a.id}.yaml`, overrides_builtin: !!old && (old.builtin || old.overrides_builtin) };
+      AGENTS = old ? AGENTS.map((x) => (x.id === a.id ? saved : x)) : [...AGENTS, saved];
+      return r({ agents: AGENTS, errors: [] });
+    }
+    case "delete_agent": {
+      const a = AGENTS.find((x) => x.id === args.id)!;
+      AGENTS = a.overrides_builtin
+        ? AGENTS.map((x) => (x.id === a.id ? { ...x, builtin: true, file: null, overrides_builtin: false } : x))
+        : AGENTS.filter((x) => x.id !== a.id);
+      return r({ agents: AGENTS, errors: [] });
+    }
+    case "available_tools":
+      return r(
+        ["list_directory", "read_file", "search_files", "write_file", "create_directory", "move_path", "delete_path", "web_fetch", "web_search", "run_powershell", "search_documents", "remember", "read_skill", "mcp__github__create_issue"].map((n) => [n, `Outil ${n}`]),
+      );
     case "list_tasks":
       return r(tasks.map(({ steps: _s, levels: _l, ...t }) => t));
     case "task_detail":

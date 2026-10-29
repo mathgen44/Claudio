@@ -8,6 +8,8 @@
 //! cargo run -p claudio-app --example cli -- search qwen
 //! cargo run -p claudio-app --example cli -- repo unsloth/Qwen3.5-4B-GGUF
 //! cargo run -p claudio-app --example cli -- usage
+//! cargo run -p claudio-app --example cli -- agent-model reviewer qwen3.5-0.8b:Q4_K_M
+//! cargo run -p claudio-app --example cli -- agent-model reviewer -
 //! cargo run -p claudio-app --example cli -- chat "Bonjour !"
 //! ```
 
@@ -114,6 +116,14 @@ async fn main() -> Result<()> {
                 id: (*key).to_owned(),
             })?;
             println!("modèle actif : {key}");
+        }
+        ["agent-model", agent, key] => {
+            let model =
+                (*key != "-").then(|| claudio_app::claudio_core::config::ActiveModel::Local {
+                    id: (*key).to_owned(),
+                });
+            app.set_agent_model(agent, model)?;
+            println!("modèle de {agent} : {key}");
         }
         ["task", objective] => {
             // Toute demande d'autorisation est refusée : la tâche doit se contenter de

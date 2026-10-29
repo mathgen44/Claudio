@@ -66,6 +66,7 @@ pub fn endpoint(p: &ProviderConfig, model: &str, api_key: Option<String>) -> Res
         base_url: base_url(p)?,
         model: model.to_owned(),
         api_key,
+        lease: None,
     })
 }
 

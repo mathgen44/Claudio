@@ -78,8 +78,13 @@ impl Embedder for LocalEmbedder<'_> {
                 embedding_pooling: Some(
                     self.model.pooling.clone().unwrap_or_else(|| "mean".into()),
                 ),
+                memory: 0,
             };
-            let endpoint = self.app.embedder.ensure(&self.app.http, cfg).await?;
+            let endpoint = self
+                .app
+                .embedder
+                .ensure(&self.app.http, cfg, u64::MAX)
+                .await?;
             let prefix = if query {
                 self.model.query_prefix.clone().unwrap_or_default()
             } else {
@@ -539,7 +544,7 @@ impl Claudio {
             ),
             ChatMessage::text("user", prompt),
         ];
-        let decision = self.route(RoutingMode::Local, &messages)?;
+        let decision = self.route(RoutingMode::Local, &messages, None)?;
         let noop = |_: StreamEvent| {};
         let approver = crate::tasks::DenyAll;
         let cancel = claudio_models::CancelToken::default();
@@ -551,6 +556,7 @@ impl Claudio {
             max_steps: 1,
             thinking: Some(false),
             json_schema: Some(schema),
+            local_model: None,
         };
         let run = self.answer(&decision, &messages, &[], &lc).await?;
         self.record_run(&run, Some(session_id))?;
@@ -673,7 +679,7 @@ impl Claudio {
             ),
             ChatMessage::text("user", prompt),
         ];
-        let decision = self.route(self.config().routing.mode, &messages)?;
+        let decision = self.route(self.config().routing.mode, &messages, None)?;
         let noop = |_: StreamEvent| {};
         let approver = crate::tasks::DenyAll;
         let cancel = claudio_models::CancelToken::default();
@@ -685,6 +691,7 @@ impl Claudio {
             max_steps: 1,
             thinking: Some(false),
             json_schema: Some(schema),
+            local_model: None,
         };
         let run = self.answer(&decision, &messages, &[], &lc).await?;
         self.record_run(&run, None)?;

@@ -167,6 +167,8 @@ pub(crate) struct LoopCtx<'a> {
     pub thinking: Option<bool>,
     /// Sortie structurée (planificateur).
     pub json_schema: Option<serde_json::Value>,
+    /// Modèle local à utiliser (sinon le modèle actif).
+    pub local_model: Option<ActiveModel>,
 }
 
 /// Attend la réponse de l'utilisateur à une demande enregistrée sous `id` ;
@@ -271,9 +273,10 @@ impl Claudio {
         Ok(())
     }
 
-    pub(crate) fn local_context(&self) -> u32 {
+    /// Contexte du modèle local donné (sinon du modèle actif).
+    pub(crate) fn local_context(&self, model: Option<&ActiveModel>) -> u32 {
         let cfg = self.config();
-        let model_max = match &cfg.active_model {
+        let model_max = match model.or(cfg.active_model.as_ref()) {
             Some(ActiveModel::Local { id }) => self
                 .registry()
                 .get(id)
@@ -350,15 +353,21 @@ impl Claudio {
             .collect()
     }
 
-    /// Décision du routeur pour ces messages.
-    pub(crate) fn route(&self, mode: RoutingMode, messages: &[ChatMessage]) -> Result<Decision> {
+    /// Décision du routeur pour ces messages ; `local` : modèle local prévu
+    /// (sinon le modèle actif).
+    pub(crate) fn route(
+        &self,
+        mode: RoutingMode,
+        messages: &[ChatMessage],
+        local: Option<&ActiveModel>,
+    ) -> Result<Decision> {
         let cfg = self.config();
         let cloud = self.cloud_endpoint()?;
         let budget = self.budget_status()?;
         router::decide(&RouteInput {
             mode,
-            local_ready: cfg.active_model.is_some(),
-            local_context: self.local_context(),
+            local_ready: local.or(cfg.active_model.as_ref()).is_some(),
+            local_context: self.local_context(local),
             prompt_tokens: estimate_tokens(messages),
             cloud_ready: cloud.is_some(),
             budget_ok: !budget.exceeded,
@@ -427,7 +436,7 @@ impl Claudio {
             .as_deref()
             .and_then(parse_mode)
             .unwrap_or(cfg.routing.mode);
-        let decision = self.route(mode, &messages)?;
+        let decision = self.route(mode, &messages, None)?;
         tracing::info!(target = ?decision.target, reason = %decision.reason, "routage");
 
         let cancel = CancelToken::default();
@@ -485,6 +494,7 @@ impl Claudio {
             max_steps: MAX_STEPS,
             thinking: None,
             json_schema: None,
+            local_model: None,
         };
         let res = self.answer(&decision, &messages, &tools, &lc).await;
         self.chats.lock().unwrap().remove(session_id);
@@ -533,7 +543,8 @@ impl Claudio {
         if let Some(f) = decision.fallback {
             attempts.push((f, String::new()));
         }
-        let local_context = self.local_context();
+        let local_model = lc.local_model.clone().or(self.config().active_model);
+        let local_context = self.local_context(local_model.as_ref());
         let mut last_err: Option<anyhow::Error> = None;
         for (i, (target, reason)) in attempts.into_iter().enumerate() {
             let reason = if i == 0 {
@@ -552,7 +563,10 @@ impl Claudio {
                 )
             };
             let prepared = match target {
-                Target::Local => self.active_endpoint().await.map(|ep| (ep, None)),
+                Target::Local => self
+                    .endpoint_for(local_model.as_ref())
+                    .await
+                    .map(|ep| (ep, None)),
                 Target::Cloud => self
                     .cloud_endpoint()
                     .and_then(|c| c.context("modèle distant indisponible"))
@@ -589,7 +603,9 @@ impl Claudio {
                     prompt_budget: None,
                 }
             };
-            let thinking = lc.thinking.or_else(|| self.thinking_for(target));
+            let thinking = lc
+                .thinking
+                .or_else(|| self.thinking_for(target, local_model.as_ref()));
             let mut produced = false;
             let res = self
                 .agent_loop(
@@ -755,12 +771,12 @@ impl Claudio {
 
     /// Raisonnement : choix de l'utilisateur ; sinon, en local, activé pour les
     /// modèles assez grands (les petits tournent en rond quand ils réfléchissent).
-    fn thinking_for(&self, target: Target) -> Option<bool> {
+    fn thinking_for(&self, target: Target, local: Option<&ActiveModel>) -> Option<bool> {
         let cfg = self.config();
         if target == Target::Cloud {
             return cfg.thinking;
         }
-        match &cfg.active_model {
+        match local {
             Some(ActiveModel::Local { id }) => {
                 let params = self
                     .registry()

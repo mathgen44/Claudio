@@ -176,7 +176,11 @@ pub fn scan(
         .into_iter()
         .filter_entry(|e| !skip_entry(e))
         .flatten()
-        .filter(|e| e.file_type().is_file() && claudio_docs::kind_of(e.path()).is_some())
+        // Les images (photos surtout) ne sont pas indexées : la reconnaissance de
+        // caractères y coûte cher pour peu de texte.
+        .filter(|e| {
+            e.file_type().is_file() && claudio_docs::kind_of(e.path()).is_some_and(|k| k != "image")
+        })
         .filter_map(|e| {
             let m = e.metadata().ok()?;
             (m.len() <= claudio_docs::MAX_FILE_BYTES).then_some(())?;

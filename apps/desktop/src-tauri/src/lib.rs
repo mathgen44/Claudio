@@ -98,6 +98,11 @@ fn set_active_model(app: App<'_>, model: ActiveModel) -> CmdResult<()> {
     app.set_active_model(model).map_err(err)
 }
 
+#[tauri::command]
+fn set_agent_model(app: App<'_>, agent_id: String, model: Option<ActiveModel>) -> CmdResult<()> {
+    app.set_agent_model(&agent_id, model).map_err(err)
+}
+
 /// Charge le modèle actif en mémoire pour que la première réponse soit rapide.
 #[tauri::command]
 async fn warm_up(app: App<'_>) -> CmdResult<()> {
@@ -427,6 +432,28 @@ fn list_agents(app: App<'_>, reload: bool) -> AgentsView {
         agents: set.agents,
         errors: set.errors,
     }
+}
+
+fn agents_view(set: claudio_app::claudio_agents::AgentSet) -> AgentsView {
+    AgentsView {
+        agents: set.agents,
+        errors: set.errors,
+    }
+}
+
+#[tauri::command]
+fn save_agent(app: App<'_>, agent: AgentDef, create: bool) -> CmdResult<AgentsView> {
+    app.save_agent(&agent, create).map(agents_view).map_err(err)
+}
+
+#[tauri::command]
+fn delete_agent(app: App<'_>, id: String) -> CmdResult<AgentsView> {
+    app.delete_agent(&id).map(agents_view).map_err(err)
+}
+
+#[tauri::command]
+async fn available_tools(app: App<'_>) -> CmdResult<Vec<(String, String)>> {
+    Ok(app.available_tools().await)
 }
 
 #[tauri::command]
@@ -818,6 +845,10 @@ pub fn run() {
             cancel_download,
             remove_model,
             set_active_model,
+            set_agent_model,
+            save_agent,
+            delete_agent,
+            available_tools,
             warm_up,
             get_config,
             update_settings,

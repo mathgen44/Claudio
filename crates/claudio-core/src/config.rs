@@ -13,6 +13,10 @@ pub struct Config {
     pub models_dir: Option<PathBuf>,
     /// Modèle utilisé pour la conversation.
     pub active_model: Option<ActiveModel>,
+    /// Modèle local propre à certains agents (identifiant d'agent → modèle) ;
+    /// les autres utilisent le modèle actif. Plusieurs modèles restent chargés
+    /// ensemble tant qu'ils tiennent en mémoire.
+    pub agent_models: std::collections::BTreeMap<String, ActiveModel>,
     /// Taille de contexte forcée ; sinon calculée selon la machine.
     pub context_size: Option<u32>,
     /// Réutiliser une instance Ollama si elle est disponible.
@@ -298,6 +302,7 @@ impl Default for Config {
         Self {
             models_dir: None,
             active_model: None,
+            agent_models: Default::default(),
             context_size: None,
             use_ollama: true,
             llama_backend: None,

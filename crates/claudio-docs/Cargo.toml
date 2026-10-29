@@ -13,6 +13,7 @@ pdf-extract = "0.12.1"
 quick-xml = "0.42.0"
 serde = { version = "1.0.229", features = ["derive"] }
 tracing = "0.1.44"
+windows = { version = "0.62.2", features = ["Data_Pdf", "Foundation_Collections", "Globalization", "Graphics_Imaging", "Media_Ocr", "Storage_Streams", "Win32_System_WinRT"] }
 zip = "9.1.2"
 
 [dev-dependencies]

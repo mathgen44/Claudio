@@ -48,6 +48,7 @@ pub fn endpoint(base: &str, model: &str) -> Endpoint {
         base_url: format!("{base}/v1"),
         model: model.to_owned(),
         api_key: None,
+        lease: None,
     }
 }
 

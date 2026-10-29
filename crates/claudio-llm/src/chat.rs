@@ -98,6 +98,8 @@ pub struct Endpoint {
     pub base_url: String,
     pub model: String,
     pub api_key: Option<String>,
+    /// Modèle local : le garde chargé tant que ce point d'accès (ou une copie) existe.
+    pub lease: Option<std::sync::Arc<()>>,
 }
 
 impl Endpoint {

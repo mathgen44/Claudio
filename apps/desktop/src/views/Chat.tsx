@@ -327,14 +327,14 @@ export function Chat({ onOpenModels }: { onOpenModels: () => void }) {
           <div className="pointer-events-none absolute inset-3 z-20 flex flex-col items-center justify-center gap-2 rounded-2xl border-2 border-dashed border-[var(--accent)] bg-[var(--bg)]/85 text-[var(--accent)]">
             <Upload size={28} />
             <p className="font-medium">Déposez vos fichiers pour les joindre au message</p>
-            <p className="text-sm text-[var(--muted)]">Texte, PDF, Word, Excel, PowerPoint, OpenDocument, HTML</p>
+            <p className="text-sm text-[var(--muted)]">Texte, PDF (même scanné), Word, Excel, PowerPoint, OpenDocument, HTML, images</p>
           </div>
         )}
         <header className="flex items-center justify-between gap-3 border-b border-[var(--border)] px-5 py-3">
           <button className="flex items-center gap-2 text-sm hover:text-[var(--accent)]" onClick={onOpenModels}>
             <span
               className={`size-2 rounded-full ${
-                loadingModel ? "animate-pulse bg-amber-500" : status?.loaded_model || active?.source === "ollama" ? "bg-[var(--ok)]" : "bg-[var(--muted)]"
+                loadingModel ? "animate-pulse bg-amber-500" : (active?.source === "local" && status?.loaded_models.includes(active.id)) || active?.source === "ollama" ? "bg-[var(--ok)]" : "bg-[var(--muted)]"
               }`}
             />
             <span className="font-medium">

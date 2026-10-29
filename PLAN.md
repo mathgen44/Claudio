@@ -331,14 +331,19 @@ Mesuré sur la machine de développement (RTX 5070 Ti) : ~440 jetons/s avec Qwen
 - Installateur NSIS par utilisateur (sans droits administrateur), mise à jour automatique signée (`tauri-plugin-updater`, clé minisign hors dépôt), bandeau au démarrage et bouton dans les Paramètres, workflow GitHub `Publication` sur étiquette `v*`.
 - Testé : synthèse SAPI (Hortense), installation vérifiée de whisper.cpp et Whisper Base, construction de l'installateur signé ; interface dans l'aperçu ; tests unitaires (mot d'éveil, Markdown, WAV, catalogue, jumelage, découpage, boutons).
 
+### Après la phase 6 (prochaine version)
+
+- Reconnaissance de caractères par le moteur intégré à Windows (`Windows.Media.Ocr`), sans téléchargement : images (PNG, JPEG, TIFF, BMP, GIF, WebP) et pages de PDF sans couche de texte, rendues à 300 points par pouce par `Windows.Data.Pdf` (300 pages au plus par document). Les pages ainsi lues sont marquées « texte reconnu ». Disponible pour les fichiers joints, `read_file` et l'index (les images d'un dossier indexé sont ignorées : surtout des photos).
+- Plusieurs modèles locaux chargés ensemble : un serveur llama.cpp par modèle, tant que la somme des mémoires estimées tient dans le budget de la carte ; sinon le modèle libre utilisé le moins récemment est déchargé (jamais un modèle en cours de réponse : on attend qu'il se libère). Chaque agent peut avoir son modèle local (catalogue d'agents) ; le contexte agrandi pour le parallélisme laisse la place aux autres modèles choisis s'ils peuvent tenir ensemble.
+- Testé en réel : relecteur sur Qwen 3.5 0.8B, autres agents sur Gemma 4 12B. Avec un contexte de 4096, les deux restent chargés ensemble ; avec 8192 (11,4 Go estimés pour Gemma sur 12,3 Go de budget), ils se relaient (rechargement en 1,5 s et 4,5 s).
+- Édition des agents dans l'interface (catalogue d'agents) : création, duplication, modification des agents fournis (un fichier du dossier utilisateur les remplace, « Rétablir l'original » le supprime), suppression ; outils cochés dans la liste réelle (MCP compris) ou motifs saisis. Les fichiers YAML restent la source et peuvent toujours être édités à la main.
+- La lecture des PDF et documents Office, notée ici comme reportée, était déjà livrée avec la phase 5.
+
 ### Reporté
 
+- Documents Word et PowerPoint anciens (.doc, .ppt).
 - Messages vocaux Telegram (Opus à décoder avant Whisper).
 - Signature Authenticode de l'installateur (certificat payant).
-- Reconnaissance de caractères (OCR) des PDF scannés et des images.
-- Édition des agents dans l'interface (aujourd'hui : fichiers YAML).
-- Gestion de plusieurs modèles locaux chargés en même temps (un modèle partagé par les agents pour l'instant).
-- Lecture des PDF et documents Office (avec la phase 5, RAG).
 - Isolement réseau des commandes (nécessiterait AppContainer ou une règle de pare-feu).
 - Téléchargements segmentés en parallèle.
 - Raccourci clavier global.

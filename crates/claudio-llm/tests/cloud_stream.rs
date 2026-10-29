@@ -65,6 +65,7 @@ async fn openai_compatible_stream() {
         base_url: format!("{base}/v1"),
         model: "gpt-test".into(),
         api_key: Some("sk-test".into()),
+        lease: None,
     };
     let mut tokens = Vec::new();
     let done = chat::stream(
@@ -111,6 +112,7 @@ async fn anthropic_stream() {
         base_url: base,
         model: "claude-opus-5-5".into(),
         api_key: Some("sk-ant-test".into()),
+        lease: None,
     };
     let mut events = Vec::new();
     let done = chat::stream(

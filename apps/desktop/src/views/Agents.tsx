@@ -10,7 +10,10 @@ import {
   Check,
   CircleDashed,
   FolderOpen,
+  Copy,
   Hourglass,
+  Pencil,
+  Plus,
   Play,
   RefreshCw,
   RotateCcw,
@@ -26,8 +29,12 @@ import {
   formatUsd,
   stepStatusLabels,
   taskStatusLabels,
+  type ActiveModel,
+  type AgentDef,
   type AgentsView,
+  type Config,
   type ScheduleView,
+  type Status,
   type StepStatus,
   type Task,
   type TaskDetail,
@@ -122,7 +129,7 @@ export function Agents() {
       <ErrorNote message={error} />
       {tab === "tasks" && <Tasks agents={agents} onError={setError} />}
       {tab === "schedules" && <Schedules agents={agents} onError={setError} />}
-      {tab === "agents" && <Catalog agents={agents} onReload={async () => setAgents(await api.listAgents(true))} />}
+      {tab === "agents" && <Catalog agents={agents} onChange={setAgents} onReload={async () => setAgents(await api.listAgents(true))} />}
     </div>
   );
 }
@@ -518,16 +525,78 @@ function Schedules({ agents, onError }: { agents: AgentsView | null; onError: (e
   );
 }
 
-function Catalog({ agents, onReload }: { agents: AgentsView | null; onReload: () => Promise<void> }) {
+const modelValue = (m: ActiveModel | undefined) => (!m ? "" : m.source === "local" ? `local:${m.id}` : `ollama:${m.name}`);
+const modelFromValue = (v: string): ActiveModel | null =>
+  v.startsWith("local:") ? { source: "local", id: v.slice(6) } : v.startsWith("ollama:") ? { source: "ollama", name: v.slice(7) } : null;
+
+function Catalog({
+  agents,
+  onChange,
+  onReload,
+}: {
+  agents: AgentsView | null;
+  onChange: (v: AgentsView) => void;
+  onReload: () => Promise<void>;
+}) {
+  const [editing, setEditing] = useState<{ agent: AgentDef; create: boolean } | null>(null);
+  const [status, setStatus] = useState<Status | null>(null);
+  const [config, setConfig] = useState<Config | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  useEffect(() => {
+    api.status().then(setStatus, (e) => setError(String(e)));
+    api.config().then(setConfig, (e) => setError(String(e)));
+  }, []);
   if (!agents) return <Spinner />;
+  const chatModels = (status?.installed_models ?? []).filter((m) => !status?.embedding_models.includes(m.key));
+  const activeName = !status?.active_model
+    ? "aucun"
+    : status.active_model.source === "local"
+      ? status.active_model.id
+      : status.active_model.name;
+  const choose = async (agentId: string, value: string) => {
+    try {
+      await api.setAgentModel(agentId, modelFromValue(value));
+      setConfig(await api.config());
+    } catch (e) {
+      setError(String(e));
+    }
+  };
+  const remove = async (a: AgentDef) => {
+    const question = a.overrides_builtin
+      ? `Rétablir l'agent « ${a.name} » tel que fourni par Claudio ? Vos modifications seront perdues.`
+      : `Supprimer l'agent « ${a.name} » ?`;
+    if (!window.confirm(question)) return;
+    try {
+      onChange(await api.deleteAgent(a.id));
+      setConfig(await api.config());
+    } catch (e) {
+      setError(String(e));
+    }
+  };
+  if (editing)
+    return (
+      <AgentEditor
+        initial={editing.agent}
+        create={editing.create}
+        taken={agents.agents.map((a) => a.id)}
+        onCancel={() => setEditing(null)}
+        onSaved={(v) => {
+          onChange(v);
+          setEditing(null);
+        }}
+      />
+    );
   return (
     <div className="space-y-4">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <p className="text-sm text-[var(--muted)]">
-          Chaque agent est un fichier YAML : consignes, outils autorisés, modèle préféré. Ajoutez les vôtres dans le dossier des
-          agents (un exemple y est expliqué).
+          Consignes, outils et modèle de chaque agent. Les agents fournis peuvent être modifiés puis rétablis ; les vôtres sont
+          enregistrés en YAML dans le dossier des agents.
         </p>
-        <div className="flex gap-2">
+        <div className="flex flex-wrap gap-2">
+          <Button variant="primary" onClick={() => setEditing({ agent: NEW_AGENT, create: true })}>
+            <Plus size={16} /> Nouvel agent
+          </Button>
           <Button onClick={() => api.openFolder("agents")}>
             <FolderOpen size={16} /> Dossier des agents
           </Button>
@@ -536,6 +605,11 @@ function Catalog({ agents, onReload }: { agents: AgentsView | null; onReload: ()
           </Button>
         </div>
       </div>
+      <p className="text-sm text-[var(--muted)]">
+        Chaque agent peut utiliser son propre modèle local. Plusieurs modèles restent chargés ensemble tant qu'ils tiennent dans
+        la mémoire vidéo ; sinon le moins utilisé est déchargé quand il est libre.
+      </p>
+      {error && <ErrorNote message={error} />}
       {agents.errors.map(([file, why]) => (
         <ErrorNote key={file} message={`${file} ignoré : ${why}`} />
       ))}
@@ -546,7 +620,11 @@ function Catalog({ agents, onReload }: { agents: AgentsView | null; onReload: ()
               <Bot size={18} className="text-[var(--accent)]" />
               <span className="font-medium">{a.name}</span>
               <span className="font-mono text-xs text-[var(--muted)]">{a.id}</span>
-              {!a.builtin && <Badge tone="accent">personnalisé</Badge>}
+              {a.overrides_builtin ? (
+                <Badge tone="accent">modifié</Badge>
+              ) : (
+                !a.builtin && <Badge tone="accent">personnalisé</Badge>
+              )}
               {a.model !== "auto" && <Badge>{a.model === "local" ? "local" : "cloud"}</Badge>}
             </div>
             <p className="text-sm text-[var(--muted)]">{a.description}</p>
@@ -564,9 +642,236 @@ function Catalog({ agents, onReload }: { agents: AgentsView | null; onReload: ()
             <div className="flex items-center gap-1 text-xs text-[var(--muted)]">
               <Hourglass size={12} /> {a.max_steps} étapes d'outils au plus
             </div>
+            {config && (
+              <label className="flex items-center gap-2 text-sm">
+                <span className="shrink-0 text-[var(--muted)]">Modèle local</span>
+                <select
+                  className={clsx(input, "min-w-0 flex-1 py-1 text-sm")}
+                  value={modelValue(config.agent_models[a.id])}
+                  onChange={(e) => choose(a.id, e.target.value)}
+                >
+                  <option value="">Modèle actif ({activeName})</option>
+                  {chatModels.map((m) => (
+                    <option key={m.key} value={`local:${m.key}`}>
+                      {m.key}
+                    </option>
+                  ))}
+                  {(status?.ollama_models ?? []).map((m) => (
+                    <option key={m.name} value={`ollama:${m.name}`}>
+                      {m.name} (Ollama)
+                    </option>
+                  ))}
+                </select>
+              </label>
+            )}
+            <div className="flex flex-wrap gap-1 pt-1">
+              <Button variant="ghost" className="px-2 py-1" onClick={() => setEditing({ agent: a, create: false })}>
+                <Pencil size={14} /> Modifier
+              </Button>
+              <Button
+                variant="ghost"
+                className="px-2 py-1"
+                onClick={() =>
+                  setEditing({
+                    agent: { ...a, id: `${a.id}-copie`, name: `${a.name} (copie)`, builtin: false, file: null, overrides_builtin: false },
+                    create: true,
+                  })
+                }
+              >
+                <Copy size={14} /> Dupliquer
+              </Button>
+              {a.file && (
+                <Button variant="danger" className="px-2 py-1" onClick={() => remove(a)}>
+                  {a.overrides_builtin ? <RotateCcw size={14} /> : <Trash2 size={14} />}
+                  {a.overrides_builtin ? "Rétablir l'original" : "Supprimer"}
+                </Button>
+              )}
+            </div>
           </Card>
         ))}
       </div>
     </div>
+  );
+}
+
+const NEW_AGENT: AgentDef = {
+  id: "",
+  name: "",
+  description: "",
+  model: "auto",
+  tools: ["list_directory", "read_file"],
+  max_steps: 12,
+  thinking: null,
+  system_prompt: "Tu es … de Claudio. Tu réponds en français.",
+  builtin: false,
+  file: null,
+  overrides_builtin: false,
+};
+
+function AgentEditor({
+  initial,
+  create,
+  taken,
+  onCancel,
+  onSaved,
+}: {
+  initial: AgentDef;
+  create: boolean;
+  taken: string[];
+  onCancel: () => void;
+  onSaved: (v: AgentsView) => void;
+}) {
+  const [a, setA] = useState<AgentDef>(initial);
+  const [tools, setTools] = useState<[string, string][] | null>(null);
+  const [extra, setExtra] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  useEffect(() => {
+    api.availableTools().then(setTools, () => setTools([]));
+  }, []);
+  const set = (patch: Partial<AgentDef>) => setA((x) => ({ ...x, ...patch }));
+  const known = new Set((tools ?? []).map(([n]) => n));
+  // Motifs (`web_*`, `*`) et outils absents (serveur MCP arrêté) : saisis à la main.
+  const extraText = extra ?? a.tools.filter((t) => !known.has(t)).join(", ");
+  const toggle = (name: string, on: boolean) => set({ tools: on ? [...a.tools, name] : a.tools.filter((t) => t !== name) });
+  const idError = !create
+    ? null
+    : !/^[A-Za-z0-9_-]+$/.test(a.id)
+      ? "Lettres sans accents, chiffres, - et _ uniquement."
+      : taken.includes(a.id)
+        ? "Cet identifiant est déjà pris."
+        : null;
+  const save = async () => {
+    const extras = extraText
+      .split(/[,\s]+/)
+      .map((t) => t.trim())
+      .filter(Boolean);
+    const agent = { ...a, tools: [...new Set([...a.tools.filter((t) => known.has(t)), ...extras])] };
+    setSaving(true);
+    setError(null);
+    try {
+      onSaved(await api.saveAgent(agent, create));
+    } catch (e) {
+      setError(String(e));
+    } finally {
+      setSaving(false);
+    }
+  };
+  const field = "flex flex-col gap-1 text-sm";
+  const hint = "text-xs text-[var(--muted)]";
+  return (
+    <Card className="space-y-4">
+      <div className="flex items-center gap-2">
+        <Bot size={18} className="text-[var(--accent)]" />
+        <h2 className="font-medium">{create ? "Nouvel agent" : `Modifier « ${initial.name} »`}</h2>
+      </div>
+      {!create && initial.builtin && (
+        <p className={hint}>
+          Agent fourni par Claudio : vos modifications sont enregistrées à part et peuvent être annulées avec « Rétablir
+          l'original ».
+        </p>
+      )}
+      <div className="grid gap-3 sm:grid-cols-2">
+        <label className={field}>
+          <span>Identifiant</span>
+          <input
+            className={clsx(input, "font-mono")}
+            value={a.id}
+            disabled={!create}
+            placeholder="traducteur"
+            onChange={(e) => set({ id: e.target.value.trim() })}
+          />
+          {idError && a.id && <span className="text-xs text-[var(--danger)]">{idError}</span>}
+        </label>
+        <label className={field}>
+          <span>Nom</span>
+          <input className={input} value={a.name} placeholder="Traducteur" onChange={(e) => set({ name: e.target.value })} />
+        </label>
+      </div>
+      <label className={field}>
+        <span>Description</span>
+        <input
+          className={input}
+          value={a.description}
+          placeholder="Traduit des documents entre le français et l'anglais."
+          onChange={(e) => set({ description: e.target.value })}
+        />
+        <span className={hint}>Le planificateur s'en sert pour confier les étapes : dites à quoi l'agent est bon.</span>
+      </label>
+      <label className={field}>
+        <span>Consignes</span>
+        <textarea
+          className={clsx(input, "min-h-40 font-mono text-xs leading-relaxed")}
+          value={a.system_prompt}
+          onChange={(e) => set({ system_prompt: e.target.value })}
+        />
+      </label>
+      <div className="grid gap-3 sm:grid-cols-3">
+        <label className={field}>
+          <span>Où l'exécuter</span>
+          <select className={input} value={a.model} onChange={(e) => set({ model: e.target.value as AgentDef["model"] })}>
+            <option value="auto">Selon le routage général</option>
+            <option value="local">Toujours en local</option>
+            <option value="cloud">De préférence dans le cloud</option>
+          </select>
+        </label>
+        <label className={field}>
+          <span>Réflexion</span>
+          <select
+            className={input}
+            value={a.thinking === null ? "" : String(a.thinking)}
+            onChange={(e) => set({ thinking: e.target.value === "" ? null : e.target.value === "true" })}
+          >
+            <option value="">Réglage général</option>
+            <option value="true">Activée</option>
+            <option value="false">Désactivée</option>
+          </select>
+        </label>
+        <label className={field}>
+          <span>Étapes d'outils au plus</span>
+          <input
+            type="number"
+            min={1}
+            max={50}
+            className={input}
+            value={a.max_steps}
+            onChange={(e) => set({ max_steps: Number(e.target.value) })}
+          />
+        </label>
+      </div>
+      <div className="space-y-2">
+        <div className="text-sm">Outils autorisés</div>
+        {!tools ? (
+          <Spinner />
+        ) : (
+          <div className="grid gap-1 sm:grid-cols-2">
+            {tools.map(([name, description]) => (
+              <label key={name} className="flex items-start gap-2 text-sm" title={description}>
+                <input type="checkbox" className="mt-1" checked={a.tools.includes(name)} onChange={(e) => toggle(name, e.target.checked)} />
+                <span className="font-mono text-xs leading-6">{name}</span>
+              </label>
+            ))}
+          </div>
+        )}
+        <label className={field}>
+          <span className={hint}>
+            Autres motifs, séparés par des virgules : <code>web_*</code>, <code>mcp__*</code>, ou <code>*</code> pour tous les outils.
+            Les autorisations de la page « Outils et accès » s'appliquent toujours.
+          </span>
+          <input className={clsx(input, "font-mono text-xs")} value={extraText} onChange={(e) => setExtra(e.target.value)} />
+        </label>
+      </div>
+      <ErrorNote message={error} />
+      <div className="flex justify-end gap-2">
+        <Button onClick={onCancel}>Annuler</Button>
+        <Button
+          variant="primary"
+          disabled={saving || !!idError || !a.name.trim() || !a.system_prompt.trim() || a.max_steps < 1 || a.max_steps > 50}
+          onClick={save}
+        >
+          <Check size={16} /> Enregistrer
+        </Button>
+      </div>
+    </Card>
   );
 }
