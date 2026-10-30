@@ -466,8 +466,19 @@ export async function mockInvoke<T>(cmd: string, args: Record<string, any> = {})
     case "verify_audit":
       return r(null);
     case "add_mcp_server": {
-      const srv = { id: `mcp${config.mcp_servers.length + 1}`, name: args.name || "Serveur MCP", transport: args.transport, enabled: true };
+      const srv = {
+        id: `mcp${config.mcp_servers.length + 1}`,
+        name: args.name || "Serveur MCP",
+        transport: args.transport,
+        enabled: true,
+        secrets: (args.secrets as [string, string][]).map(([k]) => k),
+      };
       config.mcp_servers.push(srv);
+      return r(srv);
+    }
+    case "set_mcp_secrets": {
+      const srv = config.mcp_servers.find((m) => m.id === args.id)!;
+      srv.secrets = (args.secrets as [string, string][]).map(([k]) => k);
       return r(srv);
     }
     case "set_mcp_enabled":

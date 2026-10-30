@@ -202,6 +202,18 @@ pub struct McpServerConfig {
     pub name: String,
     pub transport: McpTransport,
     pub enabled: bool,
+    /// Clés transmises au serveur : variables d'environnement (stdio) ou en-têtes
+    /// HTTP (`Authorization`…). Seuls les noms sont ici ; les valeurs sont dans le
+    /// Gestionnaire d'identifiants.
+    #[serde(default)]
+    pub secrets: Vec<String>,
+}
+
+impl McpServerConfig {
+    /// Nom, dans le Gestionnaire d'identifiants, de la valeur d'une clé du serveur.
+    pub fn secret_name(&self, key: &str) -> String {
+        format!("mcp-{}-{key}", self.id)
+    }
 }
 
 /// Famille d'API d'un fournisseur distant.

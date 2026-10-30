@@ -310,6 +310,8 @@ export interface McpServer {
   name: string;
   transport: McpTransport;
   enabled: boolean;
+  /** Noms des clés transmises (valeurs dans le Gestionnaire d'identifiants). */
+  secrets: string[];
 }
 
 export interface McpTool {
@@ -664,7 +666,9 @@ export const api = {
   setToolsEnabled: (enabled: boolean) => call<void>("set_tools_enabled", { enabled }),
   auditLog: (limit: number, before: number | null) => call<AuditEntry[]>("audit_log", { limit, before }),
   verifyAudit: () => call<number | null>("verify_audit"),
-  addMcpServer: (name: string, transport: McpTransport) => call<McpServer>("add_mcp_server", { name, transport }),
+  addMcpServer: (name: string, transport: McpTransport, secrets: [string, string][]) =>
+    call<McpServer>("add_mcp_server", { name, transport, secrets }),
+  setMcpSecrets: (id: string, secrets: [string, string][]) => call<McpServer>("set_mcp_secrets", { id, secrets }),
   setMcpEnabled: (id: string, enabled: boolean) => call<void>("set_mcp_enabled", { id, enabled }),
   removeMcpServer: (id: string) => call<void>("remove_mcp_server", { id }),
   testMcpServer: (id: string) => call<McpTool[]>("test_mcp_server", { id }),

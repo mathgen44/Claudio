@@ -49,6 +49,8 @@ struct Http {
     url: String,
     session: std::sync::Mutex<Option<String>>,
     protocol: std::sync::Mutex<Option<String>>,
+    /// En-têtes secrets (authentification), jamais journalisés.
+    headers: Vec<(String, String)>,
 }
 
 enum Transport {
@@ -102,10 +104,22 @@ fn rpc_error(v: &Value) -> anyhow::Error {
 
 impl Client {
     pub async fn connect(cfg: &McpServerConfig) -> Result<Self> {
+        let secrets = cfg
+            .secrets
+            .iter()
+            .map(|key| {
+                let value =
+                    claudio_core::secrets::get(&cfg.secret_name(key))?.with_context(|| {
+                        format!("la clé « {key} » n'est plus enregistrée : saisissez-la de nouveau")
+                    })?;
+                Ok((key.clone(), value))
+            })
+            .collect::<Result<Vec<_>>>()?;
         let transport = match &cfg.transport {
             McpTransport::Stdio { command, args, env } => {
                 let mut cmd = command_for(command, args);
                 cmd.envs(env.iter().cloned())
+                    .envs(secrets)
                     .stdin(Pipe::piped())
                     .stdout(Pipe::piped())
                     .stderr(Pipe::piped())
@@ -141,6 +155,7 @@ impl Client {
                 url: url.clone(),
                 session: Default::default(),
                 protocol: Default::default(),
+                headers: secrets,
             }),
         };
         let client = Self {
@@ -345,6 +360,13 @@ impl Http {
         if let Some(p) = self.protocol.lock().unwrap().clone() {
             req = req.header("MCP-Protocol-Version", p);
         }
+        for (name, value) in &self.headers {
+            let mut value = reqwest::header::HeaderValue::from_str(value).map_err(|_| {
+                anyhow!("la clé « {name} » contient des caractères interdits dans un en-tête")
+            })?;
+            value.set_sensitive(true);
+            req = req.header(name.as_str(), value);
+        }
         let resp = req.send().await.context("serveur MCP injoignable")?;
         if let Some(s) = resp
             .headers()
@@ -436,6 +458,7 @@ impl McpManager {
                     && s.enabled
                     && s.transport == c.config.transport
                     && s.name == c.config.name
+                    && s.secrets == c.config.secrets
             })
         });
         *self.servers.lock().await = servers;
@@ -457,6 +480,11 @@ impl McpManager {
             },
         );
         Ok(())
+    }
+
+    /// Ferme la connexion d'un serveur (ses clés ont changé, par exemple).
+    pub async fn disconnect(&self, id: &str) {
+        self.connected.lock().await.remove(id);
     }
 
     /// Connexion de test : renvoie les outils proposés par le serveur.

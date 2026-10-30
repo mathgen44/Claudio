@@ -263,6 +263,7 @@ async fn mcp_server_tools() {
             env: vec![],
         },
         enabled: true,
+        secrets: vec![],
     };
     let tools = env
         .toolbox
@@ -270,7 +271,7 @@ async fn mcp_server_tools() {
         .test(&cfg)
         .await
         .expect("connexion au faux serveur");
-    assert_eq!(tools.len(), 2);
+    assert_eq!(tools.len(), 3);
     env.toolbox.mcp.configure(vec![cfg]).await;
     let specs = env.toolbox.specs().await;
     assert!(specs.iter().any(|s| s.name == "mcp__faux-1__echo"));
@@ -293,4 +294,42 @@ async fn mcp_server_tools() {
     env.answer(&[Answer::Once]);
     let out = env.call("mcp__faux-1__fail", serde_json::json!({})).await;
     assert!(out.is_error);
+}
+
+#[tokio::test]
+async fn mcp_secrets_reach_the_server() {
+    let env = Env::new();
+    let script = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/fake_mcp.py");
+    let cfg = McpServerConfig {
+        id: format!("test{}", std::process::id()),
+        name: "Faux à clé".into(),
+        transport: McpTransport::Stdio {
+            command: "python".into(),
+            args: vec!["-I".into(), script.display().to_string()],
+            env: vec![],
+        },
+        enabled: true,
+        secrets: vec!["FAKE_TOKEN".into()],
+    };
+    let secret = cfg.secret_name("FAKE_TOKEN");
+    // Sans valeur enregistrée : erreur claire.
+    claudio_core::secrets::delete(&secret).unwrap();
+    let err = env.toolbox.mcp.test(&cfg).await.unwrap_err();
+    assert!(
+        format!("{err:#}").contains("saisissez-la de nouveau"),
+        "{err:#}"
+    );
+
+    claudio_core::secrets::set(&secret, "jeton-très-secret").unwrap();
+    env.toolbox.mcp.test(&cfg).await.unwrap();
+    env.toolbox.mcp.configure(vec![cfg.clone()]).await;
+    env.answer(&[Answer::Once]);
+    let tool = format!("mcp__{}__token", cfg.id);
+    let out = env.call(&tool, serde_json::json!({})).await;
+    claudio_core::secrets::delete(&secret).unwrap();
+    assert!(
+        out.content.contains("jeton : jeton-très-secret"),
+        "{}",
+        out.content
+    );
 }

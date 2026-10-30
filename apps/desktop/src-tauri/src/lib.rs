@@ -389,12 +389,24 @@ fn verify_audit(app: App<'_>) -> CmdResult<Option<i64>> {
 }
 
 #[tauri::command]
-fn add_mcp_server(
+async fn add_mcp_server(
     app: App<'_>,
     name: String,
     transport: McpTransport,
+    secrets: Vec<(String, String)>,
 ) -> CmdResult<McpServerConfig> {
-    app.add_mcp_server(&name, transport).map_err(err)
+    app.add_mcp_server(&name, transport, secrets)
+        .await
+        .map_err(err)
+}
+
+#[tauri::command]
+async fn set_mcp_secrets(
+    app: App<'_>,
+    id: String,
+    secrets: Vec<(String, String)>,
+) -> CmdResult<McpServerConfig> {
+    app.set_mcp_secrets(&id, secrets).await.map_err(err)
 }
 
 #[tauri::command]
@@ -887,6 +899,7 @@ pub fn run() {
             audit_log,
             verify_audit,
             add_mcp_server,
+            set_mcp_secrets,
             set_mcp_enabled,
             remove_mcp_server,
             test_mcp_server,
