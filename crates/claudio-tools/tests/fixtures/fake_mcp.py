@@ -1,5 +1,5 @@
-"""Faux serveur MCP (stdio) pour les tests : outils « echo », « fail » et « token »
-(renvoie la variable d'environnement FAKE_TOKEN)."""
+"""Faux serveur MCP (stdio) pour les tests : outils « echo », « fail », « token »
+(renvoie la variable d'environnement FAKE_TOKEN) et « pid » (numéro du processus)."""
 
 import json
 import os
@@ -13,6 +13,7 @@ TOOLS = [
     },
     {"name": "fail", "description": "Échoue toujours.", "inputSchema": {"type": "object", "properties": {}}},
     {"name": "token", "description": "Renvoie FAKE_TOKEN.", "inputSchema": {"type": "object", "properties": {}}},
+    {"name": "pid", "description": "Renvoie le numéro du processus.", "inputSchema": {"type": "object", "properties": {}}},
 ]
 
 
@@ -43,6 +44,8 @@ for line in sys.stdin:
             reply(id_, {"content": [{"type": "text", "text": "écho : " + req["params"]["arguments"]["text"]}]})
         elif name == "token":
             reply(id_, {"content": [{"type": "text", "text": "jeton : " + os.environ.get("FAKE_TOKEN", "absent")}]})
+        elif name == "pid":
+            reply(id_, {"content": [{"type": "text", "text": str(os.getpid())}]})
         else:
             reply(id_, {"content": [{"type": "text", "text": "raté"}], "isError": True})
     else:

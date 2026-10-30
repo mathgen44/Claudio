@@ -476,6 +476,12 @@ export async function mockInvoke<T>(cmd: string, args: Record<string, any> = {})
       config.mcp_servers.push(srv);
       return r(srv);
     }
+    case "update_mcp_server": {
+      const srv = config.mcp_servers.find((m) => m.id === args.id)!;
+      if (args.name.trim()) srv.name = args.name.trim();
+      srv.transport = args.transport;
+      return r(srv);
+    }
     case "set_mcp_secrets": {
       const srv = config.mcp_servers.find((m) => m.id === args.id)!;
       srv.secrets = (args.secrets as [string, string][]).map(([k]) => k);

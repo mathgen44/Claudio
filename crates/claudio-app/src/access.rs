@@ -161,6 +161,33 @@ impl Claudio {
             .context("serveur MCP inconnu")
     }
 
+    /// Modifie le nom et le lancement d'un serveur (commande, arguments, adresse) ;
+    /// ses clés sont gardées. La connexion ouverte est refaite au prochain usage.
+    pub async fn update_mcp_server(
+        &self,
+        id: &str,
+        name: &str,
+        transport: McpTransport,
+    ) -> Result<McpServerConfig> {
+        Self::validate_transport(&transport)?;
+        if !self.config().mcp_servers.iter().any(|s| s.id == id) {
+            bail!("serveur MCP inconnu");
+        }
+        let cfg = self.update_config(|c| {
+            if let Some(s) = c.mcp_servers.iter_mut().find(|s| s.id == id) {
+                if !name.trim().is_empty() {
+                    s.name = name.trim().to_owned();
+                }
+                s.transport = transport.clone();
+            }
+        })?;
+        self.toolbox.mcp.configure(cfg.mcp_servers.clone()).await;
+        cfg.mcp_servers
+            .into_iter()
+            .find(|s| s.id == id)
+            .context("serveur MCP inconnu")
+    }
+
     pub fn set_mcp_enabled(&self, id: &str, enabled: bool) -> Result<()> {
         self.update_config(|c| {
             if let Some(s) = c.mcp_servers.iter_mut().find(|s| s.id == id) {

@@ -39,6 +39,8 @@ type Pending = Arc<std::sync::Mutex<HashMap<u64, oneshot::Sender<Result<Value>>>
 /// Transport stdio : JSON-RPC, un message par ligne.
 struct Stdio {
     _child: Child,
+    /// Tue tout l'arbre de processus du serveur quand la connexion est fermée.
+    _job: Option<crate::job::Job>,
     stdin: Arc<Mutex<ChildStdin>>,
     pending: Pending,
 }
@@ -129,6 +131,9 @@ impl Client {
                 let mut child = cmd
                     .spawn()
                     .with_context(|| format!("lancement de « {command} »"))?;
+                let job = crate::job::Job::new(&child)
+                    .map_err(|e| tracing::warn!(server = %cfg.name, "rattachement au job impossible : {e}"))
+                    .ok();
                 let stdin = child.stdin.take().context("entrée du serveur MCP")?;
                 let stdout = child.stdout.take().context("sortie du serveur MCP")?;
                 let stderr = child.stderr.take().context("erreurs du serveur MCP")?;
@@ -144,6 +149,7 @@ impl Client {
                 spawn_reader(stdout, pending.clone(), stdin.clone());
                 Transport::Stdio(Stdio {
                     _child: child,
+                    _job: job,
                     stdin,
                     pending,
                 })

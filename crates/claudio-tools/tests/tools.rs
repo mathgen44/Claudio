@@ -271,7 +271,7 @@ async fn mcp_server_tools() {
         .test(&cfg)
         .await
         .expect("connexion au faux serveur");
-    assert_eq!(tools.len(), 3);
+    assert_eq!(tools.len(), 4);
     env.toolbox.mcp.configure(vec![cfg]).await;
     let specs = env.toolbox.specs().await;
     assert!(specs.iter().any(|s| s.name == "mcp__faux-1__echo"));
@@ -332,4 +332,51 @@ async fn mcp_secrets_reach_the_server() {
         "{}",
         out.content
     );
+}
+
+/// Fermer la connexion tue aussi les petits-enfants (ici `cmd /c python …`).
+#[cfg(windows)]
+#[tokio::test]
+async fn mcp_disconnect_kills_process_tree() {
+    use claudio_tools::mcp::Client;
+
+    let script = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/fake_mcp.py");
+    let cfg = McpServerConfig {
+        id: "arbre".into(),
+        name: "Arbre".into(),
+        transport: McpTransport::Stdio {
+            command: "cmd".into(),
+            args: vec![
+                "/c".into(),
+                "python".into(),
+                "-I".into(),
+                script.display().to_string(),
+            ],
+            env: vec![],
+        },
+        enabled: true,
+        secrets: vec![],
+    };
+    let alive = |pid: &str| {
+        let out = std::process::Command::new("tasklist")
+            .args(["/FI", &format!("PID eq {pid}"), "/NH"])
+            .output()
+            .unwrap();
+        String::from_utf8_lossy(&out.stdout).contains(pid)
+    };
+    let client = Client::connect(&cfg).await.unwrap();
+    let pid = client
+        .call_tool("pid", &serde_json::json!({}))
+        .await
+        .unwrap()
+        .content;
+    assert!(alive(&pid), "le serveur {pid} devrait tourner");
+    drop(client);
+    for _ in 0..20 {
+        if !alive(&pid) {
+            return;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    }
+    panic!("le processus {pid} a survécu à la déconnexion");
 }

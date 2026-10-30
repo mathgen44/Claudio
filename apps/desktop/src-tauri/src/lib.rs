@@ -401,6 +401,18 @@ async fn add_mcp_server(
 }
 
 #[tauri::command]
+async fn update_mcp_server(
+    app: App<'_>,
+    id: String,
+    name: String,
+    transport: McpTransport,
+) -> CmdResult<McpServerConfig> {
+    app.update_mcp_server(&id, &name, transport)
+        .await
+        .map_err(err)
+}
+
+#[tauri::command]
 async fn set_mcp_secrets(
     app: App<'_>,
     id: String,
@@ -899,6 +911,7 @@ pub fn run() {
             audit_log,
             verify_audit,
             add_mcp_server,
+            update_mcp_server,
             set_mcp_secrets,
             set_mcp_enabled,
             remove_mcp_server,

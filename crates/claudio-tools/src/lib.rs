@@ -5,6 +5,7 @@
 //! modèle comme résultat d'outil, pour qu'il puisse se corriger.
 
 pub mod fs;
+mod job;
 pub mod mcp;
 pub mod shell;
 pub mod web;

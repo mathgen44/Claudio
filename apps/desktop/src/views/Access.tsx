@@ -1,6 +1,6 @@
 // Outils et accès : dossiers autorisés, règles des outils, serveurs MCP.
 
-import { FolderOpen, FolderPlus, KeyRound, Plug, Plus, ShieldCheck, Trash2, X } from "lucide-react";
+import { FolderOpen, FolderPlus, KeyRound, Pencil, Plug, Plus, ShieldCheck, Trash2, X } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 import { api, type AccessOverview, type McpServer, type McpTool, type Permissions, type Policy } from "../api";
 import { Badge, Button, Card, ErrorNote, PageHeader, Spinner } from "../ui";
@@ -346,6 +346,8 @@ function McpServers({
   const [url, setUrl] = useState("");
   const [keys, setKeys] = useState<KeyRow[]>([]);
   const [preset, setPreset] = useState<McpPreset | null>(null);
+  // Serveur en cours de modification (le formulaire d'ajout est réutilisé).
+  const [editing, setEditing] = useState<McpServer | null>(null);
   const [editingKeys, setEditingKeys] = useState<{ id: string; rows: KeyRow[] } | null>(null);
   const [tools, setTools] = useState<Record<string, McpTool[] | "loading" | string>>({});
 
@@ -359,23 +361,39 @@ function McpServers({
     setAdding(true);
   };
 
-  const add = async () => {
-    await act(() =>
-      api.addMcpServer(
-        name,
-        kind === "stdio"
-          ? { type: "stdio", command: command.trim(), args: args.split("\n").map((a) => a.trim()).filter(Boolean), env: [] }
-          : { type: "http", url: url.trim() },
-        keyPairs(keys),
-      ),
-    );
+  const edit = (s: McpServer) => {
+    setEditing(s);
+    setPreset(null);
+    setEditingKeys(null);
+    setKind(s.transport.type);
+    setName(s.name);
+    setCommand(s.transport.type === "stdio" ? s.transport.command : "");
+    setArgs(s.transport.type === "stdio" ? s.transport.args.join("\n") : "");
+    setUrl(s.transport.type === "http" ? s.transport.url : "");
+    setAdding(true);
+  };
+
+  const close = () => {
     setAdding(false);
+    setEditing(null);
     setName("");
     setCommand("");
     setArgs("");
     setUrl("");
     setKeys([]);
     setPreset(null);
+  };
+
+  const save = async () => {
+    const env = editing?.transport.type === "stdio" ? editing.transport.env : [];
+    const transport: McpServer["transport"] =
+      kind === "stdio"
+        ? { type: "stdio", command: command.trim(), args: args.split("\n").map((a) => a.trim()).filter(Boolean), env }
+        : { type: "http", url: url.trim() };
+    await act(() =>
+      editing ? api.updateMcpServer(editing.id, name, transport) : api.addMcpServer(name, transport, keyPairs(keys)),
+    );
+    close();
   };
 
   const saveKeys = async () => {
@@ -461,23 +479,21 @@ function McpServers({
               onChange={(e) => setUrl(e.target.value)}
             />
           )}
-          <KeyEditor kind={kind} rows={keys} onChange={setKeys} />
+          {editing ? (
+            <p className="text-sm text-[var(--muted)]">Les clés de ce serveur sont gardées ; le bouton Clés permet de les changer.</p>
+          ) : (
+            <KeyEditor kind={kind} rows={keys} onChange={setKeys} />
+          )}
           <div className="flex justify-end gap-2">
-            <Button
-              variant="ghost"
-              onClick={() => {
-                setAdding(false);
-                setPreset(null);
-              }}
-            >
+            <Button variant="ghost" onClick={close}>
               Annuler
             </Button>
             <Button
               variant="primary"
-              disabled={(kind === "stdio" ? !command.trim() : !url.trim()) || !keysValid(keys)}
-              onClick={add}
+              disabled={(kind === "stdio" ? !command.trim() : !url.trim()) || (!editing && !keysValid(keys))}
+              onClick={save}
             >
-              Ajouter
+              {editing ? "Enregistrer" : "Ajouter"}
             </Button>
           </div>
         </div>
@@ -504,6 +520,9 @@ function McpServers({
                   />
                   Activé
                 </label>
+                <Button aria-label="Modifier" title="Modifier la commande ou l'adresse" onClick={() => edit(s)}>
+                  <Pencil size={16} />
+                </Button>
                 <Button
                   onClick={() =>
                     setEditingKeys(

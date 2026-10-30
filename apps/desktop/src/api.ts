@@ -668,6 +668,8 @@ export const api = {
   verifyAudit: () => call<number | null>("verify_audit"),
   addMcpServer: (name: string, transport: McpTransport, secrets: [string, string][]) =>
     call<McpServer>("add_mcp_server", { name, transport, secrets }),
+  updateMcpServer: (id: string, name: string, transport: McpTransport) =>
+    call<McpServer>("update_mcp_server", { id, name, transport }),
   setMcpSecrets: (id: string, secrets: [string, string][]) => call<McpServer>("set_mcp_secrets", { id, secrets }),
   setMcpEnabled: (id: string, enabled: boolean) => call<void>("set_mcp_enabled", { id, enabled }),
   removeMcpServer: (id: string) => call<void>("remove_mcp_server", { id }),
