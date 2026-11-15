@@ -63,6 +63,9 @@ export interface InstalledModel {
   file: string;
   size: number;
   sha256: string | null;
+  /** Projecteur de vision : le modèle voit les images. */
+  mmproj?: string | null;
+  mmproj_size?: number | null;
   installed_at: string;
 }
 
@@ -162,13 +165,21 @@ export interface VoiceStatus {
   wake_missing: string[];
 }
 
-/** Fichier joint à un message : son texte est extrait sur place. */
+/** Fichier joint à un message : son texte est extrait sur place. Une image est
+ *  rangée à part et envoyée telle quelle aux modèles qui voient. */
 export interface Attachment {
   name: string;
   path: string;
   kind: string;
   text: string;
   truncated: boolean;
+  /** Image rangée (nom dans le dossier des images). */
+  image?: string;
+}
+
+/** Le modèle local actif voit-il les images ? */
+export function localVision(active: ActiveModel | null | undefined, installed: InstalledModel[]): boolean {
+  return active?.source === "local" && !!installed.find((m) => m.key === active.id)?.mmproj;
 }
 
 const escapeAttr = (s: string) => s.replace(/&/g, "&amp;").replace(/"/g, "&quot;");
@@ -577,6 +588,8 @@ export interface Message {
   reasoning: string | null;
   route: string | null;
   cost_usd: number | null;
+  /** Images jointes (noms dans le dossier des images). */
+  images?: string[];
   created_at: string;
 }
 
@@ -595,6 +608,15 @@ export interface Reply {
 }
 
 export const inTauri = "__TAURI_INTERNALS__" in window;
+
+function blobToDataUrl(b: Blob): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const r = new FileReader();
+    r.onload = () => resolve(String(r.result));
+    r.onerror = () => reject(r.error);
+    r.readAsDataURL(b);
+  });
+}
 
 function call<T>(cmd: string, args?: Record<string, unknown>): Promise<T> {
   return inTauri ? invoke<T>(cmd, args) : mockInvoke<T>(cmd, args);
@@ -630,8 +652,18 @@ export const api = {
   renameSession: (id: string, title: string) => call<void>("rename_session", { id, title }),
   deleteSession: (id: string) => call<void>("delete_session", { id }),
   messages: (sessionId: string) => call<Message[]>("list_messages", { sessionId }),
-  sendMessage: (sessionId: string, text: string, onEvent: (e: StreamEvent) => void) =>
-    call<Reply>("send_message", { sessionId, text, onEvent: channel(onEvent) }),
+  sendMessage: (sessionId: string, text: string, images: string[], onEvent: (e: StreamEvent) => void) =>
+    call<Reply>("send_message", { sessionId, text, images, onEvent: channel(onEvent) }),
+  /** Image collée ou déposée hors de l'explorateur : envoyée en octets bruts. */
+  attachImage: async (file: Blob, name: string): Promise<Attachment> =>
+    inTauri
+      ? invoke<Attachment>("attach_image", new Uint8Array(await file.arrayBuffer()), {
+          headers: { name: encodeURIComponent(name) },
+        })
+      : mockInvoke<Attachment>("attach_image", { name, url: await blobToDataUrl(file) }),
+  imageDataUrl: (id: string) => call<string>("image_data_url", { id }),
+  addVision: (key: string, onProgress: (p: Progress) => void) =>
+    call<InstalledModel>("add_vision", { key, onProgress: channel(onProgress) }),
   cancelChat: (sessionId: string) => call<void>("cancel_chat", { sessionId }),
   setSessionRoute: (sessionId: string, mode: RoutingMode | null) =>
     call<void>("set_session_route", { sessionId, mode }),

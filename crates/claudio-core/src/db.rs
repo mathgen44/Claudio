@@ -195,6 +195,9 @@ const MIGRATIONS: &[&str] = &[
         value TEXT NOT NULL
     );
 "#,
+    r#"
+    ALTER TABLE messages ADD COLUMN images TEXT;
+"#,
 ];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -251,10 +254,13 @@ pub struct Message {
     /// Pourquoi ce modèle a répondu (décision du routeur).
     pub route: Option<String>,
     pub cost_usd: Option<f64>,
+    /// Images jointes : noms des fichiers du dossier des images.
+    #[serde(default)]
+    pub images: Vec<String>,
     pub created_at: DateTime<Utc>,
 }
 
-/// Métadonnées facultatives d'un message produit par un modèle.
+/// Métadonnées facultatives d'un message.
 #[derive(Debug, Clone, Default)]
 pub struct MessageMeta {
     pub model: Option<String>,
@@ -263,6 +269,16 @@ pub struct MessageMeta {
     pub reasoning: Option<String>,
     pub route: Option<String>,
     pub cost_usd: Option<f64>,
+    pub images: Vec<String>,
+}
+
+fn images_column(images: &[String]) -> Option<String> {
+    (!images.is_empty()).then(|| serde_json::to_string(images).unwrap_or_default())
+}
+
+fn parse_images(v: Option<String>) -> Vec<String> {
+    v.and_then(|t| serde_json::from_str(&t).ok())
+        .unwrap_or_default()
 }
 
 #[derive(Clone)]
@@ -432,8 +448,8 @@ impl Database {
         let id = self.with(|c| {
             c.execute(
                 "INSERT INTO messages (session_id, role, content, model, tokens, duration_ms,
-                                       reasoning, route, cost_usd, created_at)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+                                       reasoning, route, cost_usd, created_at, images)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
                 params![
                     session_id,
                     role.as_str(),
@@ -444,7 +460,8 @@ impl Database {
                     meta.reasoning,
                     meta.route,
                     meta.cost_usd,
-                    now
+                    now,
+                    images_column(&meta.images)
                 ],
             )?;
             c.execute(
@@ -464,15 +481,26 @@ impl Database {
             reasoning: meta.reasoning,
             route: meta.route,
             cost_usd: meta.cost_usd,
+            images: meta.images,
             created_at: now,
         })
+    }
+
+    /// Toutes les images encore jointes à un message (pour le ménage du dossier).
+    pub fn referenced_images(&self) -> Result<std::collections::HashSet<String>> {
+        let rows: Vec<Option<String>> = self.with(|c| {
+            c.prepare("SELECT images FROM messages WHERE images IS NOT NULL")?
+                .query_map([], |r| r.get(0))?
+                .collect()
+        })?;
+        Ok(rows.into_iter().flat_map(parse_images).collect())
     }
 
     pub fn list_messages(&self, session_id: &str) -> Result<Vec<Message>> {
         let rows = self.with(|c| {
             c.prepare(
                 "SELECT id, session_id, role, content, model, tokens, duration_ms, created_at,
-                        reasoning, route, cost_usd
+                        reasoning, route, cost_usd, images
                  FROM messages WHERE session_id = ?1 ORDER BY id",
             )?
             .query_map([session_id], |r| {
@@ -490,6 +518,7 @@ impl Database {
                         reasoning: r.get(8)?,
                         route: r.get(9)?,
                         cost_usd: r.get(10)?,
+                        images: parse_images(r.get(11)?),
                     },
                 ))
             })?
@@ -524,14 +553,28 @@ mod tests {
             },
         )
         .unwrap();
+        db.add_message(
+            &s.id,
+            Role::User,
+            "",
+            MessageMeta {
+                images: vec!["ab.jpg".into()],
+                ..Default::default()
+            },
+        )
+        .unwrap();
         let msgs = db.list_messages(&s.id).unwrap();
-        assert_eq!(msgs.len(), 2);
+        assert_eq!(msgs.len(), 3);
+        assert_eq!(msgs[2].images, vec!["ab.jpg".to_owned()]);
+        assert!(msgs[0].images.is_empty());
+        assert!(db.referenced_images().unwrap().contains("ab.jpg"));
         assert_eq!(msgs[1].role, Role::Assistant);
         assert_eq!(msgs[1].model.as_deref(), Some("m"));
         db.rename_session(&s.id, "Salutations").unwrap();
         assert_eq!(db.list_sessions().unwrap()[0].title, "Salutations");
         db.delete_session(&s.id).unwrap();
         assert!(db.list_messages(&s.id).unwrap().is_empty());
+        assert!(db.referenced_images().unwrap().is_empty());
         assert!(db.get_session(&s.id).unwrap().is_none());
     }
 

@@ -7,6 +7,7 @@ authors.workspace = true
 
 [dependencies]
 anyhow = "1.0.104"
+base64 = "0.23.1"
 chrono = "0.4.45"
 claudio-agents = { version = "0.1.0", path = "../claudio-agents" }
 claudio-core = { version = "0.1.0", path = "../claudio-core" }
@@ -20,10 +21,13 @@ claudio-tools = { version = "0.1.0", path = "../claudio-tools" }
 claudio-voice = { version = "0.1.0", path = "../claudio-voice" }
 croner = "4.0.2"
 getrandom = "0.3.4"
+hex = "0.4.3"
+image = { version = "0.25.10", default-features = false, features = ["bmp", "gif", "jpeg", "png", "tiff", "webp"] }
 notify-debouncer-mini = "0.7.0"
 reqwest = "0.13.5"
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.154"
+sha2 = "0.11.1"
 tokio = { version = "1.54.1", features = ["sync", "rt", "macros", "time"] }
 tracing = "0.1.44"
 

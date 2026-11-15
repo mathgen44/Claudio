@@ -49,6 +49,9 @@ pub fn endpoint(base: &str, model: &str) -> Endpoint {
         model: model.to_owned(),
         api_key: None,
         lease: None,
+        // Les modèles d'Ollama ne sont pas interrogés sur leurs capacités :
+        // les images leur arrivent par leur texte reconnu.
+        vision: false,
     }
 }
 

@@ -64,6 +64,8 @@ pub struct RepoInfo {
     pub architecture: Option<String>,
     pub context_length: Option<u32>,
     pub variants: Vec<GgufVariant>,
+    /// Projecteur de vision proposé par le dépôt (`mmproj-*.gguf`).
+    pub mmproj: Option<RemoteFile>,
 }
 
 impl RepoInfo {
@@ -235,7 +237,7 @@ pub async fn repo_info(
         info.get("gated"),
         None | Some(Value::Bool(false)) | Some(Value::Null)
     );
-    let files = tree(http, repo, token)
+    let files: Vec<RemoteFile> = tree(http, repo, token)
         .await?
         .into_iter()
         .filter(|e| e.kind == "file")
@@ -260,6 +262,7 @@ pub async fn repo_info(
             .pointer("/gguf/context_length")
             .and_then(Value::as_u64)
             .map(|c| c.min(u32::MAX as u64) as u32),
+        mmproj: pick_mmproj(&files),
         variants: group_gguf(files),
     })
 }
@@ -297,6 +300,64 @@ pub fn guess_quant(file: &str) -> String {
         }
     }
     stem.to_owned()
+}
+
+/// Projecteur de vision d'un dépôt, s'il en propose un : de préférence en F16
+/// (bien pris en charge par toutes les cartes), sinon BF16, Q8, F32.
+pub fn pick_mmproj(files: &[RemoteFile]) -> Option<RemoteFile> {
+    let rank = |f: &RemoteFile| {
+        let name = f
+            .path
+            .rsplit('/')
+            .next()
+            .unwrap_or(&f.path)
+            .to_ascii_lowercase();
+        let pref = if name.contains("bf16") {
+            1
+        } else if name.contains("f16") {
+            0
+        } else if name.contains("q8") {
+            2
+        } else if name.contains("f32") {
+            3
+        } else {
+            4
+        };
+        (pref, f.size)
+    };
+    files
+        .iter()
+        .filter(|f| {
+            let name = f
+                .path
+                .rsplit('/')
+                .next()
+                .unwrap_or(&f.path)
+                .to_ascii_lowercase();
+            name.starts_with("mmproj") && name.ends_with(".gguf")
+        })
+        .min_by_key(|f| rank(f))
+        .cloned()
+}
+
+/// Projecteur de vision d'un dépôt (lecture de la liste de ses fichiers).
+pub async fn mmproj_of(
+    http: &reqwest::Client,
+    repo: &str,
+    token: Option<&str>,
+) -> Result<Option<RemoteFile>> {
+    valid_repo(repo)?;
+    let files: Vec<RemoteFile> = tree(http, repo, token)
+        .await?
+        .into_iter()
+        .filter(|e| e.kind == "file")
+        .map(|e| RemoteFile {
+            path: e.path,
+            size: e.size,
+            sha256: e.lfs.map(|l| l.oid),
+        })
+        .collect();
+    Ok(pick_mmproj(&files))
 }
 
 /// Regroupe les fichiers GGUF par variante (fichiers découpés réunis), sans les
@@ -369,6 +430,19 @@ mod tests {
         assert_eq!(v[1].quant, "Q8_0");
         assert_eq!(v[1].size, 15);
         assert!(v[1].files[0].path.contains("00001"));
+    }
+
+    #[test]
+    fn picks_the_f16_projector() {
+        let files = vec![
+            f("mmproj-F32.gguf", 4),
+            f("mmproj-BF16.gguf", 2),
+            f("mmproj-F16.gguf", 2),
+            f("m-Q4_K_M.gguf", 8),
+        ];
+        assert_eq!(pick_mmproj(&files).unwrap().path, "mmproj-F16.gguf");
+        assert_eq!(pick_mmproj(&files[..2]).unwrap().path, "mmproj-BF16.gguf");
+        assert!(pick_mmproj(&files[3..]).is_none());
     }
 
     #[test]

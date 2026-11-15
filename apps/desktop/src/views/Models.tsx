@@ -1,6 +1,6 @@
 // Modèles : actif, installés, catalogue adapté à la machine, Ollama.
 
-import { Check, Download, Trash2 } from "lucide-react";
+import { Check, Download, Eye, Trash2 } from "lucide-react";
 import { useEffect, useState } from "react";
 import { api, modelKey, placementLabels, type ActiveModel, type Recommendation } from "../api";
 import { DownloadRow } from "../components/DownloadRow";
@@ -12,7 +12,7 @@ const sameModel = (a: ActiveModel | null, b: ActiveModel) =>
   !!a && a.source === b.source && (a.source === "local" ? a.id === (b as typeof a).id : a.name === (b as typeof a).name);
 
 export function Models() {
-  const { status, refresh, downloads, downloadModel } = useStore();
+  const { status, refresh, downloads, downloadModel, addVision } = useStore();
   const [recos, setRecos] = useState<Recommendation[] | null>(null);
   const [showAll, setShowAll] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -73,29 +73,50 @@ export function Models() {
           const ref: ActiveModel = { source: "local", id: m.key };
           const isActive = sameModel(status.active_model, ref);
           const isEmbedding = status.embedding_models.includes(m.key);
+          const visionDl = downloads[`${m.key}#vision`];
           return (
-            <Card key={m.key} className="flex items-center justify-between gap-4 py-3">
-              <div>
-                <div className="flex items-center gap-2">
-                  <span className="font-medium">{m.name}</span>
-                  <Badge>{m.quant}</Badge>
-                  {isActive && <Badge tone="accent">Actif</Badge>}
-                  {status.loaded_models.includes(m.key) && <Badge tone="ok">En mémoire</Badge>}
+            <Card key={m.key} className="space-y-2 py-3">
+              <div className="flex items-center justify-between gap-4">
+                <div>
+                  <div className="flex items-center gap-2">
+                    <span className="font-medium">{m.name}</span>
+                    <Badge>{m.quant}</Badge>
+                    {m.mmproj && (
+                      <span title="Ce modèle voit les images jointes">
+                        <Badge tone="ok">
+                          <Eye size={12} className="mr-1" />
+                          Vision
+                        </Badge>
+                      </span>
+                    )}
+                    {isActive && <Badge tone="accent">Actif</Badge>}
+                    {status.loaded_models.includes(m.key) && <Badge tone="ok">En mémoire</Badge>}
+                  </div>
+                  <p className="text-xs text-[var(--muted)]">
+                    {formatBytes(m.size + (m.mmproj_size ?? 0))} · {m.repo}
+                  </p>
                 </div>
-                <p className="text-xs text-[var(--muted)]">
-                  {formatBytes(m.size)} · {m.repo}
-                </p>
+                <div className="flex gap-1">
+                  {!isEmbedding && !m.mmproj && !visionDl && (
+                    <Button
+                      variant="ghost"
+                      onClick={() => addVision(m.key, m.name)}
+                      title="Télécharge le projecteur de vision du modèle (quelques centaines de Mo), s'il en propose un"
+                    >
+                      <Eye size={16} /> Ajouter la vision
+                    </Button>
+                  )}
+                  {isEmbedding ? (
+                    <Badge>embeddings (Mémoire)</Badge>
+                  ) : (
+                    !isActive && <Button onClick={() => activate(ref)}>Utiliser</Button>
+                  )}
+                  <Button variant="danger" onClick={() => remove(m.key, m.name)} aria-label="Supprimer">
+                    <Trash2 size={16} />
+                  </Button>
+                </div>
               </div>
-              <div className="flex gap-1">
-                {isEmbedding ? (
-                  <Badge>embeddings (Mémoire)</Badge>
-                ) : (
-                  !isActive && <Button onClick={() => activate(ref)}>Utiliser</Button>
-                )}
-                <Button variant="danger" onClick={() => remove(m.key, m.name)} aria-label="Supprimer">
-                  <Trash2 size={16} />
-                </Button>
-              </div>
+              {visionDl && <DownloadRow id={`${m.key}#vision`} state={visionDl} />}
             </Card>
           );
         })}

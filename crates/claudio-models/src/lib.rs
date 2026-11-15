@@ -32,6 +32,17 @@ pub async fn install(
         .quant(quant)
         .with_context(|| format!("quantification {quant} inconnue pour {}", model.id))?;
     let remote = hf::file_info(http, &model.repo, &q.file, hf_token).await?;
+    // Projecteur de vision, si le dépôt en propose un (modèles multimodaux).
+    let mmproj = if model.is_embedding() {
+        None
+    } else {
+        hf::mmproj_of(http, &model.repo, hf_token)
+            .await
+            .unwrap_or_else(|e| {
+                tracing::warn!("projecteur de vision non recherché : {e:#}");
+                None
+            })
+    };
     install_files(
         http,
         registry,
@@ -42,6 +53,7 @@ pub async fn install(
             quant,
             params_b: Some(model.params_b),
             context_max: Some(model.context_max),
+            mmproj,
         },
         &[remote],
         hf_token,
@@ -59,6 +71,8 @@ pub struct NewModel<'a> {
     pub quant: &'a str,
     pub params_b: Option<f64>,
     pub context_max: Option<u32>,
+    /// Projecteur de vision à télécharger avec le modèle.
+    pub mmproj: Option<hf::RemoteFile>,
 }
 
 /// Télécharge une variante GGUF (un ou plusieurs fichiers) et l'enregistre.
@@ -73,7 +87,8 @@ pub async fn install_files(
     mut on_progress: impl FnMut(&Progress),
 ) -> Result<InstalledModel> {
     anyhow::ensure!(!files.is_empty(), "aucun fichier à télécharger");
-    let total: u64 = files.iter().map(|f| f.size).sum();
+    let total: u64 =
+        files.iter().map(|f| f.size).sum::<u64>() + model.mmproj.as_ref().map_or(0, |f| f.size);
     tracing::info!(
         model = model.model_id,
         quant = model.quant,
@@ -82,7 +97,7 @@ pub async fn install_files(
     );
     let mut done = 0;
     let mut paths = Vec::new();
-    for f in files {
+    for f in files.iter().chain(model.mmproj.as_ref()) {
         let dest = registry.target_path(model.model_id, &f.path);
         let url = hf::resolve_url(model.repo, &f.path);
         download::download(
@@ -111,6 +126,7 @@ pub async fn install_files(
                 .to_path_buf(),
         );
     }
+    let mmproj = model.mmproj.as_ref().and_then(|_| paths.pop());
     let installed = InstalledModel {
         key: model_key(model.model_id, model.quant),
         model_id: model.model_id.to_owned(),
@@ -119,12 +135,57 @@ pub async fn install_files(
         repo: model.repo.to_owned(),
         file: paths.remove(0),
         parts: paths,
-        size: total,
+        size: files.iter().map(|f| f.size).sum(),
         sha256: files[0].sha256.clone(),
         params_b: model.params_b,
         context_max: model.context_max,
+        mmproj_size: model.mmproj.as_ref().map(|f| f.size),
+        mmproj,
         installed_at: Utc::now(),
     };
     registry.add(installed.clone())?;
     Ok(installed)
+}
+
+/// Ajoute la vision à un modèle déjà installé : télécharge le projecteur
+/// (`mmproj`) proposé par son dépôt.
+pub async fn add_vision(
+    http: &reqwest::Client,
+    registry: &Registry,
+    key: &str,
+    hf_token: Option<&str>,
+    cancel: &CancelToken,
+    mut on_progress: impl FnMut(&Progress),
+) -> Result<InstalledModel> {
+    let mut m = registry
+        .get(key)?
+        .with_context(|| format!("le modèle {key} n'est pas installé"))?;
+    if registry.mmproj_of(&m).is_some() {
+        return Ok(m);
+    }
+    let f = hf::mmproj_of(http, &m.repo, hf_token)
+        .await?
+        .with_context(|| format!("{} ne propose pas de projecteur de vision", m.repo))?;
+    let dest = registry.target_path(&m.model_id, &f.path);
+    download::download(
+        http,
+        download::Request {
+            url: &hf::resolve_url(&m.repo, &f.path),
+            dest: &dest,
+            bearer: hf_token,
+            sha256: f.sha256.as_deref(),
+            expected_size: Some(f.size),
+        },
+        cancel,
+        |p| on_progress(p),
+    )
+    .await?;
+    m.mmproj = Some(
+        dest.strip_prefix(registry.root())
+            .unwrap_or(&dest)
+            .to_path_buf(),
+    );
+    m.mmproj_size = Some(f.size);
+    registry.add(m.clone())?;
+    Ok(m)
 }

@@ -340,11 +340,13 @@ Mesuré sur la machine de développement (RTX 5070 Ti) : ~440 jetons/s avec Qwen
 - Clés des serveurs MCP : variables d'environnement (programme local) ou en-têtes HTTP (`Authorization`…) saisies dans « Outils et accès » ; seules les valeurs vont au Gestionnaire d'identifiants (`Claudio/mcp-<serveur>-<clé>`), la configuration ne garde que les noms. Clés modifiables (valeur vide = inchangée), supprimées avec le serveur ; en-têtes marqués sensibles.
 - La lecture des PDF et documents Office, notée ici comme reportée, était déjà livrée avec la phase 5.
 - Contexte des modèles locaux relevé : le catalogue indique désormais le maximum natif (262 144 jetons pour Qwen 3.5 et suivants et pour Gemma 4, au lieu de 32 768), et les Paramètres proposent 65 536, 131 072 et 262 144. Le maximum du catalogue prime sur celui enregistré à l'installation, pour que les modèles déjà téléchargés en profitent. Le contexte par défaut reste à 8 192 ; au-delà de la mémoire vidéo, llama.cpp déborde en mémoire vive (plus lent).
+- Vision : les modèles locaux multimodaux (Gemma 4, Qwen 3.5…) reçoivent les images jointes. Le projecteur de vision (`mmproj`, de préférence en F16) est téléchargé avec le modèle quand son dépôt en propose un, ou ajouté après coup (« Ajouter la vision » dans *Modèles*) ; llama-server est lancé avec `--mmproj`, et sa taille est comptée dans la mémoire du modèle. Images glissées, choisies ou collées (presse-papiers), réduites à 1 568 px et réencodées (JPEG, PNG si transparence), rangées dans le dossier des données sous un nom tiré de leur contenu, avec leur texte reconnu (OCR) à côté ; supprimées avec la dernière conversation qui les utilise. Envoi aux formats OpenAI/llama.cpp (`image_url` en `data:`) et Anthropic (bloc `image`). Un modèle sans vision (Ollama, fournisseur inconnu) reçoit le texte reconnu à la place, et le routeur automatique envoie une image vers le cloud quand seul le modèle distant la voit. Vision des fournisseurs distants estimée d'après le nom du modèle.
 
 ### Reporté
 
 - Documents Word et PowerPoint anciens (.doc, .ppt).
 - Messages vocaux Telegram (Opus à décoder avant Whisper).
+- Photos reçues par Telegram, et images dans les tâches d'agents (outil `view_image`).
 - Signature Authenticode de l'installateur (certificat payant).
 - Isolement réseau des commandes (nécessiterait AppContainer ou une règle de pare-feu).
 - Téléchargements segmentés en parallèle.

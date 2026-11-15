@@ -84,6 +84,19 @@ async fn install_model(
 }
 
 #[tauri::command]
+async fn add_vision(
+    app: App<'_>,
+    key: String,
+    on_progress: Channel<Progress>,
+) -> CmdResult<InstalledModel> {
+    app.add_vision(&key, |p| {
+        let _ = on_progress.send(p.clone());
+    })
+    .await
+    .map_err(err)
+}
+
+#[tauri::command]
 fn cancel_download(app: App<'_>, key: String) {
     app.cancel_download(&key);
 }
@@ -190,7 +203,7 @@ fn rename_session(app: App<'_>, id: String, title: String) -> CmdResult<()> {
 
 #[tauri::command]
 fn delete_session(app: App<'_>, id: String) -> CmdResult<()> {
-    app.db.delete_session(&id).map_err(err)
+    app.delete_session(&id).map_err(err)
 }
 
 #[tauri::command]
@@ -203,13 +216,59 @@ async fn send_message(
     app: App<'_>,
     session_id: String,
     text: String,
+    images: Option<Vec<String>>,
     on_event: Channel<StreamEvent>,
 ) -> CmdResult<Reply> {
-    app.send_message(&session_id, &text, |ev| {
+    app.send_message_with_images(&session_id, &text, &images.unwrap_or_default(), |ev| {
         let _ = on_event.send(ev);
     })
     .await
     .map_err(err)
+}
+
+/// Décode un en-tête encodé par `encodeURIComponent`.
+fn percent_decode(s: &str) -> String {
+    let b = s.as_bytes();
+    let mut out = Vec::with_capacity(b.len());
+    let mut i = 0;
+    while i < b.len() {
+        if b[i] == b'%'
+            && i + 2 < b.len()
+            && let Some(v) = std::str::from_utf8(&b[i + 1..i + 3])
+                .ok()
+                .and_then(|h| u8::from_str_radix(h, 16).ok())
+        {
+            out.push(v);
+            i += 3;
+        } else {
+            out.push(b[i]);
+            i += 1;
+        }
+    }
+    String::from_utf8_lossy(&out).into_owned()
+}
+
+/// Image collée (octets bruts ; nom dans l'en-tête `name`).
+#[tauri::command]
+async fn attach_image(
+    app: App<'_>,
+    request: tauri::ipc::Request<'_>,
+) -> CmdResult<claudio_app::Attachment> {
+    let tauri::ipc::InvokeBody::Raw(bytes) = request.body() else {
+        return Err("image attendue".into());
+    };
+    let name = request
+        .headers()
+        .get("name")
+        .and_then(|v| v.to_str().ok())
+        .map(percent_decode)
+        .unwrap_or_default();
+    app.attach_image(&name, bytes.clone()).await.map_err(err)
+}
+
+#[tauri::command]
+fn image_data_url(app: App<'_>, id: String) -> CmdResult<String> {
+    app.image_data_url(&id).map_err(err)
 }
 
 #[tauri::command]
@@ -886,6 +945,9 @@ pub fn run() {
             send_message,
             cancel_chat,
             read_attachment,
+            attach_image,
+            image_data_url,
+            add_vision,
             set_session_route,
             hf_search,
             hf_repo,

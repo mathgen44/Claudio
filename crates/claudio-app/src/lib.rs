@@ -7,6 +7,7 @@ mod attachments;
 mod cloud;
 mod conversation;
 mod hub;
+mod images;
 mod knowledge;
 pub mod router;
 mod schedule;
@@ -355,6 +356,31 @@ impl Claudio {
         self.after_install(res?)
     }
 
+    /// Ajoute la vision à un modèle installé (projecteur `mmproj` de son dépôt).
+    pub async fn add_vision(
+        &self,
+        key: &str,
+        on_progress: impl FnMut(&Progress),
+    ) -> Result<InstalledModel> {
+        let dl_key = format!("{key}#vision");
+        let cancel = self.begin_download(&dl_key)?;
+        let token = self.hf_token();
+        let res = claudio_models::add_vision(
+            &self.http,
+            &self.registry(),
+            key,
+            token.as_deref(),
+            &cancel,
+            on_progress,
+        )
+        .await;
+        self.end_download(&dl_key);
+        let m = res?;
+        // Le modèle rechargé prendra le projecteur à sa prochaine demande.
+        self.engine.unload_model(key).await;
+        Ok(m)
+    }
+
     pub async fn remove_model(&self, key: &str) -> Result<()> {
         self.engine.unload_model(key).await;
         self.registry().remove(key)?;
@@ -433,21 +459,27 @@ impl Claudio {
 
     /// Mémoire estimée d'un modèle installé pour un contexte total donné.
     fn model_memory(&self, profile: &MachineProfile, m: &InstalledModel, context: u32) -> u64 {
-        match self
-            .catalog
-            .get(&m.model_id)
-            .and_then(|c| c.quant(&m.quant).map(|q| (c, q)))
-        {
-            Some((c, q)) => select::memory_needed(c, q, context),
-            None => {
-                let meta = claudio_models::select::ModelMeta {
-                    params_b: m.params_b,
-                    active_params_b: None,
-                    moe: false,
-                };
-                select::estimate_fit(profile, m.size, &m.quant, context, &meta).memory_needed
+        // Le projecteur de vision est chargé avec le modèle.
+        let vision = self
+            .registry()
+            .mmproj_of(m)
+            .map_or(0, |_| m.mmproj_size.unwrap_or(0));
+        vision
+            + match self
+                .catalog
+                .get(&m.model_id)
+                .and_then(|c| c.quant(&m.quant).map(|q| (c, q)))
+            {
+                Some((c, q)) => select::memory_needed(c, q, context),
+                None => {
+                    let meta = claudio_models::select::ModelMeta {
+                        params_b: m.params_b,
+                        active_params_b: None,
+                        moe: false,
+                    };
+                    select::estimate_fit(profile, m.size, &m.quant, context, &meta).memory_needed
+                }
             }
-        }
     }
 
     /// Contexte maximal d'un modèle installé. Le catalogue prime sur la valeur
@@ -515,6 +547,7 @@ impl Claudio {
             parallel,
             embedding_pooling: None,
             memory: self.model_memory(&profile, m, total),
+            mmproj: self.registry().mmproj_of(m),
         })
     }
 

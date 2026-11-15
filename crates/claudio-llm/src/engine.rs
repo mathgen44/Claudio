@@ -47,6 +47,7 @@ fn same(a: &ServerConfig, b: &ServerConfig) -> bool {
         && a.use_gpu == b.use_gpu
         && a.parallel == b.parallel
         && a.embedding_pooling == b.embedding_pooling
+        && a.mmproj == b.mmproj
         && a.exe == b.exe
 }
 

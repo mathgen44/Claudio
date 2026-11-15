@@ -1,5 +1,8 @@
 //! Fichiers joints à un message (glisser-déposer) : leur texte est extrait sur
 //! place et ajouté au message. Le dépôt vaut accord de lecture pour ce fichier.
+//!
+//! Les images sont rangées à part (voir `images`) et envoyées telles quelles aux
+//! modèles qui les voient ; leur texte reconnu sert aux autres.
 
 use std::path::Path;
 
@@ -21,6 +24,9 @@ pub struct Attachment {
     pub text: String,
     /// Texte coupé à `MAX_ATTACHMENT_CHARS`.
     pub truncated: bool,
+    /// Image rangée (nom dans le dossier des images), jointe au message comme image.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub image: Option<String>,
 }
 
 fn read(path: &Path) -> Result<Attachment> {
@@ -52,6 +58,25 @@ fn read(path: &Path) -> Result<Attachment> {
         kind,
         text,
         truncated,
+        image: None,
+    })
+}
+
+/// Range une image et note son texte reconnu (OCR), s'il y en a.
+fn store_image(dir: &Path, name: String, path: String, bytes: &[u8]) -> Result<Attachment> {
+    let id = crate::images::store(dir, bytes).with_context(|| format!("lecture de {name}"))?;
+    let stored = crate::images::path_of(dir, &id)?;
+    let text = claudio_docs::extract(&stored)
+        .map(|d| d.text())
+        .unwrap_or_default();
+    crate::images::set_text(dir, &id, text.trim())?;
+    Ok(Attachment {
+        name,
+        path,
+        kind: "image",
+        text: String::new(),
+        truncated: false,
+        image: Some(id),
     })
 }
 
@@ -79,7 +104,21 @@ impl Claudio {
     /// Lit un fichier déposé par l'utilisateur ; la lecture est inscrite au journal.
     pub async fn read_attachment(&self, path: &str) -> Result<Attachment> {
         let p = Path::new(path).to_path_buf();
-        let res = tokio::task::spawn_blocking(move || read(&p)).await?;
+        let dir = self.paths.images_dir();
+        let res = tokio::task::spawn_blocking(move || {
+            if claudio_docs::kind_of(&p) == Some("image") {
+                let name = p
+                    .file_name()
+                    .context("nom de fichier invalide")?
+                    .to_string_lossy()
+                    .into_owned();
+                let bytes = std::fs::read(&p).with_context(|| format!("lecture de {name}"))?;
+                store_image(&dir, name, p.display().to_string(), &bytes)
+            } else {
+                read(&p)
+            }
+        })
+        .await?;
         let outcome = match &res {
             Ok(_) => "ok".to_owned(),
             Err(e) => format!("{e:#}"),
@@ -92,6 +131,33 @@ impl Claudio {
             outcome: &outcome,
         });
         res
+    }
+
+    /// Image collée depuis le presse-papiers (ou déposée hors de l'application).
+    pub async fn attach_image(&self, name: &str, bytes: Vec<u8>) -> Result<Attachment> {
+        let dir = self.paths.images_dir();
+        let name = if name.trim().is_empty() {
+            "image collée".to_owned()
+        } else {
+            name.trim().to_owned()
+        };
+        let path = format!("presse-papiers:{name}");
+        tokio::task::spawn_blocking(move || store_image(&dir, name, path, &bytes)).await?
+    }
+
+    /// Image rangée, en adresse `data:` pour l'affichage.
+    pub fn image_data_url(&self, id: &str) -> Result<String> {
+        crate::images::data_url(&self.paths.images_dir(), id)
+    }
+
+    /// Supprime une conversation et les images qui n'étaient jointes qu'à elle.
+    pub fn delete_session(&self, id: &str) -> Result<()> {
+        self.db.delete_session(id)?;
+        let keep = self.db.referenced_images()?;
+        if let Err(e) = crate::images::prune(&self.paths.images_dir(), &keep) {
+            tracing::warn!("ménage des images : {e:#}");
+        }
+        Ok(())
     }
 }
 

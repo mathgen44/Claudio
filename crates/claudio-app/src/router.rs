@@ -26,6 +26,12 @@ pub struct RouteInput {
     pub cloud_ready: bool,
     /// Le budget permet encore une demande distante.
     pub budget_ok: bool,
+    /// La conversation contient des images.
+    pub has_images: bool,
+    /// Le modèle local voit les images (projecteur de vision installé).
+    pub local_vision: bool,
+    /// Le modèle distant voit les images.
+    pub cloud_vision: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -57,6 +63,20 @@ pub fn decide(i: &RouteInput) -> Result<Decision> {
             decision(Target::Local, "mode local", None)
         }
         RoutingMode::Auto => {
+            // Une image que le modèle local ne verrait pas part vers un modèle
+            // distant qui la voit (sinon, seul son texte reconnu serait lu).
+            if i.has_images && !i.local_vision && i.cloud_vision && cloud_ok {
+                let reason = if i.local_ready {
+                    "image : le modèle local ne voit pas les images"
+                } else {
+                    "aucun modèle local disponible"
+                };
+                return Ok(decision(
+                    Target::Cloud,
+                    reason,
+                    i.local_ready.then_some(Target::Local),
+                ));
+            }
             if i.local_ready && (fits_locally || !cloud_ok) {
                 let reason = if fits_locally {
                     "modèle local"
@@ -116,7 +136,30 @@ mod tests {
             prompt_tokens: 500,
             cloud_ready: true,
             budget_ok: true,
+            has_images: false,
+            local_vision: false,
+            cloud_vision: true,
         }
+    }
+
+    #[test]
+    fn auto_sends_images_where_they_are_seen() {
+        let mut i = input(RoutingMode::Auto);
+        i.has_images = true;
+        let d = decide(&i).unwrap();
+        assert_eq!((d.target, d.fallback), (Target::Cloud, Some(Target::Local)));
+        assert!(d.reason.contains("image"));
+        // Le modèle local voit : il reste prioritaire.
+        i.local_vision = true;
+        assert_eq!(decide(&i).unwrap().target, Target::Local);
+        // Ni l'un ni l'autre ne voit : local, avec le texte reconnu.
+        i.local_vision = false;
+        i.cloud_vision = false;
+        assert_eq!(decide(&i).unwrap().target, Target::Local);
+        // Le mode local ne quitte jamais la machine, même pour une image.
+        let mut l = input(RoutingMode::Local);
+        l.has_images = true;
+        assert_eq!(decide(&l).unwrap().target, Target::Local);
     }
 
     #[test]

@@ -99,6 +99,21 @@ pub(crate) fn request_body(endpoint: &Endpoint, messages: &[ChatMessage], opts: 
                 });
                 turns.push(json!({"role": "assistant", "content": content}));
             }
+            "user" if !m.images.is_empty() => {
+                let mut blocks: Vec<Value> = m
+                    .images
+                    .iter()
+                    .map(|img| {
+                        json!({"type": "image", "source": {
+                            "type": "base64", "media_type": img.media_type, "data": img.data,
+                        }})
+                    })
+                    .collect();
+                if !m.content.is_empty() {
+                    blocks.push(json!({"type": "text", "text": m.content}));
+                }
+                turns.push(json!({"role": "user", "content": blocks}));
+            }
             role => turns.push(json!({"role": role, "content": m.content})),
         }
     }
@@ -336,6 +351,7 @@ mod tests {
             model: model.into(),
             api_key: Some("k".into()),
             lease: None,
+            vision: true,
         }
     }
 
@@ -396,6 +412,25 @@ mod tests {
         parse_line(r#"data: {"type":"message_delta","delta":{"stop_reason":"refusal"},"usage":{"output_tokens":0}}"#, &mut c).unwrap();
         assert!(c.refused);
         assert!(parse_line(r#"data: {"type":"error","error":{"type":"overloaded_error","message":"Overloaded"}}"#, &mut c).is_err());
+    }
+
+    #[test]
+    fn images_come_before_the_text() {
+        let m = ChatMessage {
+            images: vec![crate::chat::ImagePart {
+                name: "a.png".into(),
+                media_type: "image/png".into(),
+                data: "QUJD".into(),
+                text: String::new(),
+            }],
+            ..ChatMessage::text("user", "Décris")
+        };
+        let body = request_body(&ep("claude-sonnet-5-5"), &[m], &Options::default());
+        let blocks = body["messages"][0]["content"].as_array().unwrap();
+        assert_eq!(blocks[0]["type"], "image");
+        assert_eq!(blocks[0]["source"]["media_type"], "image/png");
+        assert_eq!(blocks[0]["source"]["data"], "QUJD");
+        assert_eq!(blocks[1]["text"], "Décris");
     }
 
     #[test]

@@ -86,7 +86,9 @@ pub(crate) fn estimate_tokens(messages: &[ChatMessage]) -> u32 {
         .iter()
         .map(|m| {
             let args: usize = m.tool_calls.iter().map(|c| c.arguments.len()).sum();
-            (m.content.chars().count() + args) as u32 * 2 / 7 + 4
+            (m.content.chars().count() + args) as u32 * 2 / 7
+                + 4
+                + m.images.len() as u32 * chat::IMAGE_TOKENS
         })
         .sum()
 }
@@ -369,9 +371,55 @@ impl Claudio {
             local_ready: local.or(cfg.active_model.as_ref()).is_some(),
             local_context: self.local_context(local),
             prompt_tokens: estimate_tokens(messages),
+            has_images: messages.iter().any(|m| !m.images.is_empty()),
+            local_vision: self.local_vision(local),
+            cloud_vision: cloud.as_ref().is_some_and(|(_, ep)| ep.vision),
             cloud_ready: cloud.is_some(),
             budget_ok: !budget.exceeded,
         })
+    }
+
+    /// Le modèle local donné (sinon le modèle actif) voit-il les images ?
+    pub(crate) fn local_vision(&self, model: Option<&ActiveModel>) -> bool {
+        let cfg = self.config();
+        match model.or(cfg.active_model.as_ref()) {
+            Some(ActiveModel::Local { id }) => {
+                let reg = self.registry();
+                reg.get(id)
+                    .ok()
+                    .flatten()
+                    .is_some_and(|m| reg.mmproj_of(&m).is_some())
+            }
+            _ => false,
+        }
+    }
+
+    /// Messages d'une conversation prêts pour un modèle (images chargées).
+    fn history(&self, session_id: &str) -> Result<Vec<ChatMessage>> {
+        let dir = self.paths.images_dir();
+        Ok(self
+            .db
+            .list_messages(session_id)?
+            .into_iter()
+            .filter(|m| m.role != Role::Tool)
+            .map(|m| {
+                let images = m
+                    .images
+                    .iter()
+                    .filter_map(|id| match crate::images::load(&dir, id, id) {
+                        Ok(img) => Some(img),
+                        Err(e) => {
+                            tracing::warn!("image {id} ignorée : {e:#}");
+                            None
+                        }
+                    })
+                    .collect();
+                ChatMessage {
+                    images,
+                    ..ChatMessage::text(m.role.as_str(), m.content)
+                }
+            })
+            .collect())
     }
 
     /// Enregistre la consommation d'une exécution ; renvoie son coût s'il est connu.
@@ -401,18 +449,44 @@ impl Claudio {
         text: &str,
         on_event: impl FnMut(StreamEvent) + Send,
     ) -> Result<Reply> {
+        self.send_message_with_images(session_id, text, &[], on_event)
+            .await
+    }
+
+    /// Comme `send_message`, avec des images rangées (voir `attach_image`).
+    pub async fn send_message_with_images(
+        self: &Arc<Self>,
+        session_id: &str,
+        text: &str,
+        images: &[String],
+        on_event: impl FnMut(StreamEvent) + Send,
+    ) -> Result<Reply> {
         let session = self
             .db
             .get_session(session_id)?
             .context("conversation introuvable")?;
         let text = text.trim();
-        if text.is_empty() {
+        if text.is_empty() && images.is_empty() {
             bail!("message vide");
         }
-        self.db
-            .add_message(session_id, Role::User, text, MessageMeta::default())?;
+        let dir = self.paths.images_dir();
+        for id in images {
+            if !crate::images::path_of(&dir, id)?.is_file() {
+                bail!("image {id} introuvable : joignez-la de nouveau");
+            }
+        }
+        self.db.add_message(
+            session_id,
+            Role::User,
+            text,
+            MessageMeta {
+                images: images.to_vec(),
+                ..Default::default()
+            },
+        )?;
         if session.title == DEFAULT_SESSION_TITLE {
-            self.db.rename_session(session_id, &title_from(text))?;
+            let title = if text.is_empty() { "Image" } else { text };
+            self.db.rename_session(session_id, &title_from(title))?;
         }
 
         let cfg = self.config();
@@ -424,13 +498,7 @@ impl Claudio {
             "system",
             self.system_prompt(&cfg.system_prompt, session_id, !tools.is_empty()) + &extra,
         )];
-        messages.extend(
-            self.db
-                .list_messages(session_id)?
-                .into_iter()
-                .filter(|m| m.role != Role::Tool)
-                .map(|m| ChatMessage::text(m.role.as_str(), m.content)),
-        );
+        messages.extend(self.history(session_id)?);
         let mode = session
             .route
             .as_deref()
@@ -518,6 +586,7 @@ impl Claudio {
                 reasoning: Some(run.reasoning.clone()).filter(|r| !r.is_empty()),
                 route: Some(run.reason.clone()),
                 cost_usd: run.provider.as_ref().and(cost_usd),
+                images: Vec::new(),
             },
         )?;
         if !run.cancelled && !run.refused {
@@ -580,11 +649,25 @@ impl Claudio {
                     continue;
                 }
             };
+            let blind = !endpoint.vision && messages.iter().any(|m| !m.images.is_empty());
+            let reason = if blind {
+                format!("{reason} · images lues par leur texte (modèle sans vision)")
+            } else {
+                reason
+            };
             (lc.emit)(StreamEvent::Route {
                 target,
                 model: endpoint.model.clone(),
                 reason: reason.clone(),
             });
+            // Un modèle qui ne voit pas reçoit le texte reconnu des images.
+            let folded;
+            let messages = if endpoint.vision {
+                messages
+            } else {
+                folded = chat::fold_images(messages);
+                &folded[..]
+            };
             let msgs = if target == Target::Local {
                 trim_history(messages, router::local_prompt_budget(local_context))
             } else {

@@ -22,6 +22,7 @@ Windows 10 ou 11 · 64 bits · aucun droit administrateur nécessaire
 |---|---|
 | 💬 **Discuter** | Une conversation fluide, en français, avec un modèle choisi automatiquement selon la puissance de votre PC. |
 | 🧠 **Se souvenir** | Il retient vos préférences et les faits importants. Vous voyez tout, vous corrigez ou effacez quand vous voulez. |
+| 🖼️ **Voir vos images** | Glissez ou collez une photo, une capture d'écran : les modèles qui ont la vision la regardent ; les autres lisent son texte. |
 | 📚 **Lire vos documents** | Donnez-lui un dossier : il retrouve l'information dans vos PDF, Word, Excel, PowerPoint et fichiers texte. |
 | 🗂️ **Agir sur votre PC** | Lire, créer, déplacer des fichiers, chercher sur le web, lancer des commandes — **uniquement avec votre accord**. |
 | 🤖 **Travailler en équipe** | Pour une demande complexe, plusieurs agents spécialisés se répartissent le travail, en parallèle, même fenêtre fermée. |
@@ -64,6 +65,7 @@ Prévoyez de 3 à 20 Go d'espace disque pour les modèles. Les cartes NVIDIA, AM
 
 - **Poser une question** : écrivez dans la conversation, ou cliquez sur 🎙️ et parlez.
 - **Lui confier vos documents** : *Mémoire › Documents › Ajouter un dossier*.
+- **Lui montrer une image** : glissez-la dans la conversation ou collez-la (Ctrl+V). Si le modèle ne la voit pas, *Modèles › Ajouter la vision*.
 - **Une tâche plus longue** : *Agents et tâches › Nouvelle tâche*, décrivez l'objectif, Claudio s'organise.
 - **Le mot d'éveil** : *Voix et Telegram › Mot d'éveil*, puis dites « Claudio, quel temps fera-t-il demain ? ».
 - **Toujours prêt** : *Paramètres › Démarrage* pour le lancer avec Windows, discrètement dans la zone de notification.

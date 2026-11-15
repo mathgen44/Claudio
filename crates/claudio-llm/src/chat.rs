@@ -29,6 +29,66 @@ pub struct ChatMessage {
     /// Blocs natifs du fournisseur (Anthropic : réflexion signée), renvoyés tels quels.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub raw: Option<Value>,
+    /// Images jointes (rôle `user`), pour les modèles qui les voient.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub images: Vec<ImagePart>,
+}
+
+/// Image jointe à un message.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct ImagePart {
+    /// Nom affiché (fichier d'origine).
+    pub name: String,
+    /// Type MIME : `image/jpeg`, `image/png`…
+    pub media_type: String,
+    /// Contenu encodé en base64.
+    pub data: String,
+    /// Texte reconnu dans l'image (OCR), transmis à la place de l'image aux
+    /// modèles qui ne voient pas.
+    #[serde(default)]
+    pub text: String,
+}
+
+impl ImagePart {
+    pub fn data_url(&self) -> String {
+        format!("data:{};base64,{}", self.media_type, self.data)
+    }
+}
+
+/// Jetons comptés pour une image dans les estimations de taille de conversation.
+pub const IMAGE_TOKENS: u32 = 1100;
+
+/// Remplace les images par leur texte reconnu, pour un modèle qui ne voit pas.
+pub fn fold_images(messages: &[ChatMessage]) -> Vec<ChatMessage> {
+    messages
+        .iter()
+        .map(|m| {
+            if m.images.is_empty() {
+                return m.clone();
+            }
+            let mut content = m.content.clone();
+            for img in &m.images {
+                let text = img.text.trim();
+                let body = if text.is_empty() {
+                    "(image sans texte lisible : le modèle actuel ne voit pas les images)"
+                } else {
+                    text
+                };
+                if !content.is_empty() {
+                    content.push_str("\n\n");
+                }
+                content.push_str(&format!(
+                    "<image nom=\"{}\" lue=\"texte reconnu\">\n{body}\n</image>",
+                    img.name.replace('"', "'")
+                ));
+            }
+            ChatMessage {
+                content,
+                images: Vec::new(),
+                ..m.clone()
+            }
+        })
+        .collect()
 }
 
 impl ChatMessage {
@@ -100,6 +160,8 @@ pub struct Endpoint {
     pub api_key: Option<String>,
     /// Modèle local : le garde chargé tant que ce point d'accès (ou une copie) existe.
     pub lease: Option<std::sync::Arc<()>>,
+    /// Le modèle accepte des images.
+    pub vision: bool,
 }
 
 impl Endpoint {
@@ -400,6 +462,19 @@ fn openai_message(m: &ChatMessage) -> Value {
                 "function": {"name": c.name, "arguments": c.arguments},
             })).collect::<Vec<_>>(),
         }),
+        "user" if !m.images.is_empty() => {
+            let mut parts: Vec<Value> = Vec::new();
+            if !m.content.is_empty() {
+                parts.push(serde_json::json!({"type": "text", "text": m.content}));
+            }
+            for img in &m.images {
+                parts.push(serde_json::json!({
+                    "type": "image_url",
+                    "image_url": {"url": img.data_url()},
+                }));
+            }
+            serde_json::json!({"role": "user", "content": parts})
+        }
         _ => serde_json::json!({"role": m.role, "content": m.content}),
     }
 }
@@ -468,6 +543,56 @@ mod tests {
         assert!(m["content"].is_null());
         let r = openai_message(&ChatMessage::tool_result("c1", "ok".into(), false));
         assert_eq!(r["tool_call_id"], "c1");
+    }
+
+    fn image(text: &str) -> ImagePart {
+        ImagePart {
+            name: "photo.jpg".into(),
+            media_type: "image/jpeg".into(),
+            data: "AAAA".into(),
+            text: text.into(),
+        }
+    }
+
+    #[test]
+    fn sends_images_as_parts() {
+        let m = ChatMessage {
+            images: vec![image("")],
+            ..ChatMessage::text("user", "Que vois-tu ?")
+        };
+        let v = openai_message(&m);
+        assert_eq!(v["content"][0]["text"], "Que vois-tu ?");
+        assert_eq!(v["content"][1]["type"], "image_url");
+        assert_eq!(
+            v["content"][1]["image_url"]["url"],
+            "data:image/jpeg;base64,AAAA"
+        );
+        // Sans texte, seule l'image part.
+        let m = ChatMessage {
+            images: vec![image("")],
+            ..ChatMessage::text("user", "")
+        };
+        assert_eq!(openai_message(&m)["content"].as_array().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn folds_images_into_text() {
+        let msgs = vec![
+            ChatMessage::text("system", "s"),
+            ChatMessage {
+                images: vec![image("FACTURE 42"), image("")],
+                ..ChatMessage::text("user", "Lis ça")
+            },
+        ];
+        let f = fold_images(&msgs);
+        assert!(f[1].images.is_empty());
+        assert!(
+            f[1].content
+                .starts_with("Lis ça\n\n<image nom=\"photo.jpg\"")
+        );
+        assert!(f[1].content.contains("FACTURE 42"));
+        assert!(f[1].content.contains("ne voit pas les images"));
+        assert_eq!(f[0].content, "s");
     }
 
     #[test]

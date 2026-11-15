@@ -18,6 +18,8 @@ interface Store {
   downloads: Record<string, DownloadState>;
   downloadModel: (modelId: string, quant: string, label: string) => Promise<boolean>;
   downloadHf: (repo: string, quant: string) => Promise<boolean>;
+  /** Télécharge le projecteur de vision d'un modèle installé (clé `<modèle>#vision`). */
+  addVision: (key: string, label: string) => Promise<boolean>;
   installRuntime: () => Promise<boolean>;
   cancel: (key: string) => void;
   dismiss: (key: string) => void;
@@ -71,6 +73,11 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       api.installHf(repo, quant, (progress) => patch(modelKey(repo, quant), { progress })),
     );
 
+  const addVision = (key: string, label: string) =>
+    run(`${key}#vision`, `Vision · ${label}`, () =>
+      api.addVision(key, (progress) => patch(`${key}#vision`, { progress })),
+    );
+
   const installRuntime = () =>
     run(RUNTIME_KEY, "Moteur llama.cpp", () =>
       api.installRuntime((e) =>
@@ -82,7 +89,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   const dismiss = (key: string) => setDownloads(({ [key]: _, ...rest }) => rest);
 
   return (
-    <Ctx.Provider value={{ status, statusError, refresh, downloads, downloadModel, downloadHf, installRuntime, cancel, dismiss }}>
+    <Ctx.Provider value={{ status, statusError, refresh, downloads, downloadModel, downloadHf, addVision, installRuntime, cancel, dismiss }}>
       {children}
     </Ctx.Provider>
   );

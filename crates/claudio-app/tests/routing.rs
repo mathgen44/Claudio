@@ -147,3 +147,95 @@ async fn local_mode_never_calls_the_cloud() {
         .unwrap_err();
     assert!(format!("{err:#}").contains("mode local"));
 }
+
+/// Faux serveur qui renvoie aussi le corps de la demande reçue.
+async fn capturing_provider() -> (String, tokio::sync::oneshot::Receiver<String>) {
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let base = format!("http://{}/v1", listener.local_addr().unwrap());
+    let (tx, rx) = tokio::sync::oneshot::channel();
+    tokio::spawn(async move {
+        let (mut sock, _) = listener.accept().await.unwrap();
+        let mut buf = Vec::new();
+        let mut chunk = vec![0u8; 65536];
+        let body = loop {
+            let n = sock.read(&mut chunk).await.unwrap();
+            buf.extend_from_slice(&chunk[..n]);
+            let text = String::from_utf8_lossy(&buf).into_owned();
+            if let Some(i) = text.find("\r\n\r\n") {
+                let len: usize = text[..i]
+                    .to_ascii_lowercase()
+                    .lines()
+                    .find_map(|l| {
+                        l.strip_prefix("content-length:")
+                            .map(|v| v.trim().parse().unwrap())
+                    })
+                    .unwrap_or(0);
+                if buf.len() >= i + 4 + len {
+                    break text[i + 4..].to_owned();
+                }
+            }
+        };
+        let _ = tx.send(body);
+        let sse = "data: {\"choices\":[{\"delta\":{\"content\":\"Vu\"}}]}\n\ndata: [DONE]\n\n";
+        let resp = format!(
+            "HTTP/1.1 200 OK\r\ncontent-type: text/event-stream\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{sse}",
+            sse.len()
+        );
+        sock.write_all(resp.as_bytes()).await.unwrap();
+    });
+    (base, rx)
+}
+
+fn png() -> Vec<u8> {
+    let img = image::RgbImage::from_pixel(32, 16, image::Rgb([200, 30, 30]));
+    let mut out = Vec::new();
+    image::DynamicImage::ImageRgb8(img)
+        .write_to(&mut std::io::Cursor::new(&mut out), image::ImageFormat::Png)
+        .unwrap();
+    out
+}
+
+#[tokio::test]
+async fn images_reach_blind_models_as_text() {
+    let dir = tempfile::tempdir().unwrap();
+    let (base, body) = capturing_provider().await;
+    // Fournisseur « compatible OpenAI » : sa vision n'est pas connue, donc pas d'image.
+    let app = setup(dir.path(), &base);
+    app.set_routing_mode(RoutingMode::Cloud).unwrap();
+    let att = app.attach_image("capture.png", png()).await.unwrap();
+    assert_eq!(att.kind, "image");
+    let id = att.image.clone().unwrap();
+    assert!(
+        app.image_data_url(&id)
+            .unwrap()
+            .starts_with("data:image/jpeg;base64,")
+    );
+
+    let s = app.create_session().unwrap();
+    let mut events = Vec::new();
+    let reply = app
+        .send_message_with_images(&s.id, "", std::slice::from_ref(&id), |e| events.push(e))
+        .await
+        .unwrap();
+    assert_eq!(reply.message.content, "Vu");
+    let body = body.await.unwrap();
+    assert!(!body.contains("image_url"), "{body}");
+    assert!(body.contains("<image nom="), "{body}");
+    assert!(events.iter().any(|e| matches!(
+        e,
+        StreamEvent::Route { reason, .. } if reason.contains("modèle sans vision")
+    )));
+
+    let history = app.db.list_messages(&s.id).unwrap();
+    assert_eq!(history[0].images, vec![id.clone()]);
+    assert_eq!(app.db.get_session(&s.id).unwrap().unwrap().title, "Image");
+    assert!(
+        app.send_message_with_images(&s.id, "", &["../x.jpg".into()], |_| {})
+            .await
+            .is_err()
+    );
+
+    // Supprimer la conversation supprime l'image qui n'était jointe qu'à elle.
+    app.delete_session(&s.id).unwrap();
+    assert!(app.image_data_url(&id).is_err());
+}

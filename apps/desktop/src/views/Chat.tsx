@@ -1,6 +1,6 @@
 // Conversations : liste des sessions, fil de messages en continu, saisie.
 
-import { Brain, ChevronRight, Cloud, Cpu, FileText, Loader2, MessageSquarePlus, Mic, Paperclip, Pencil, Send, Square, Trash2, Upload, Volume2, VolumeX, X } from "lucide-react";
+import { Brain, ChevronRight, Cloud, Cpu, EyeOff, FileText, Loader2, MessageSquarePlus, Mic, Paperclip, Pencil, Send, Square, Trash2, Upload, Volume2, VolumeX, X } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
@@ -9,6 +9,7 @@ import {
   api,
   formatUsd,
   inTauri,
+  localVision,
   routingLabels,
   splitAttachments,
   withAttachments,
@@ -33,6 +34,7 @@ type Route = Extract<StreamEvent, { type: "route" }>;
 
 interface Pending {
   user: string;
+  images: string[];
   reasoning: string;
   content: string;
   route?: Route;
@@ -107,13 +109,17 @@ export function Chat({ onOpenModels }: { onOpenModels: () => void }) {
   /** Joint des fichiers (chemins dans l'application, fichiers en mémoire dans le navigateur). */
   const attach = useCallback(async (dropped: { paths: string[] } | { files: File[] }) => {
     const jobs: Promise<Attachment>[] =
-      "paths" in dropped ? dropped.paths.map(api.readAttachment) : dropped.files.map(api.attachmentFromFile);
+      "paths" in dropped
+        ? dropped.paths.map(api.readAttachment)
+        : dropped.files.map((f) =>
+            f.type.startsWith("image/") ? api.attachImage(f, f.name || "image collée") : api.attachmentFromFile(f),
+          );
     setReading((n) => n + jobs.length);
     const errors: string[] = [];
     await Promise.all(
       jobs.map((j) =>
         j
-          .then((a) => setFiles((f) => (f.some((x) => x.path === a.path) ? f : [...f, a])))
+          .then((a) => setFiles((f) => (f.some((x) => attachmentKey(x) === attachmentKey(a)) ? f : [...f, a])))
           .catch((e) => errors.push(String(e)))
           .finally(() => setReading((n) => n - 1)),
       ),
@@ -187,14 +193,18 @@ export function Chat({ onOpenModels }: { onOpenModels: () => void }) {
   const send = async (override?: string, spoken = false) => {
     const typed = (override ?? input).trim();
     if ((!typed && !files.length) || pending || reading) return;
-    const text = withAttachments(typed, files);
+    const text = withAttachments(
+      typed,
+      files.filter((f) => !f.image),
+    );
+    const images = files.flatMap((f) => (f.image ? [f.image] : []));
     setError(null);
     if (override === undefined) setInput("");
     setFiles([]);
     const sid = current ?? (await newSession(true));
-    setPending({ user: text, reasoning: "", content: "", tools: [] });
+    setPending({ user: text, images, reasoning: "", content: "", tools: [] });
     try {
-      const reply = await api.sendMessage(sid, text, (e) => {
+      const reply = await api.sendMessage(sid, text, images, (e) => {
         if (e.type === "approval") {
           const { type: _, ...req } = e;
           setApprovals((a) => [...a, req]);
@@ -284,6 +294,12 @@ export function Chat({ onOpenModels }: { onOpenModels: () => void }) {
 
   const noModel = status && !status.active_model && !config?.routing.cloud;
   const session = sessions.find((s) => s.id === current);
+  // Images jointes alors qu'aucun modèle ne les verra probablement : seul leur texte sera lu.
+  const routeMode = session?.route ?? config?.routing.mode;
+  const blindImages =
+    files.some((f) => f.image) &&
+    !localVision(active, status?.installed_models ?? []) &&
+    !(config?.routing.cloud && routeMode !== "local");
   const setRoute = async (mode: RoutingMode | null) => {
     if (!current) return;
     await api.setSessionRoute(current, mode);
@@ -327,7 +343,7 @@ export function Chat({ onOpenModels }: { onOpenModels: () => void }) {
           <div className="pointer-events-none absolute inset-3 z-20 flex flex-col items-center justify-center gap-2 rounded-2xl border-2 border-dashed border-[var(--accent)] bg-[var(--bg)]/85 text-[var(--accent)]">
             <Upload size={28} />
             <p className="font-medium">Déposez vos fichiers pour les joindre au message</p>
-            <p className="text-sm text-[var(--muted)]">Texte, PDF (même scanné), Word, Excel, PowerPoint, OpenDocument, HTML, images</p>
+            <p className="text-sm text-[var(--muted)]">Texte, PDF (même scanné), Word, Excel, PowerPoint, OpenDocument, HTML, images (vues par les modèles qui ont la vision)</p>
           </div>
         )}
         <header className="flex items-center justify-between gap-3 border-b border-[var(--border)] px-5 py-3">
@@ -385,12 +401,12 @@ export function Chat({ onOpenModels }: { onOpenModels: () => void }) {
                 {tools.map((t) => (
                   <ToolCard key={t.id} step={t} />
                 ))}
-                <Bubble role={m.role} content={m.content} reasoning={m.reasoning ?? undefined} meta={m} />
+                <Bubble role={m.role} content={m.content} images={m.images} reasoning={m.reasoning ?? undefined} meta={m} />
               </div>
             ))}
             {pending && (
               <>
-                <Bubble role="user" content={pending.user} />
+                <Bubble role="user" content={pending.user} images={pending.images} />
                 {pending.route && <RouteBadge route={pending.route} />}
                 {pending.tools.map((t) => (
                   <ToolCard key={t.id} step={t} />
@@ -416,21 +432,40 @@ export function Chat({ onOpenModels }: { onOpenModels: () => void }) {
         <footer className="border-t border-[var(--border)] px-5 py-4">
           {(files.length > 0 || reading > 0) && (
             <div className="mx-auto mb-2 flex max-w-3xl flex-wrap gap-2">
-              {files.map((f) => (
-                <FileChip
-                  key={f.path}
-                  name={f.name}
-                  title={`${f.path}${f.truncated ? " — trop long : seul le début est joint" : ""}`}
-                  note={f.truncated ? "début seulement" : undefined}
-                  onRemove={() => setFiles((l) => l.filter((x) => x.path !== f.path))}
-                />
-              ))}
+              {files.map((f) =>
+                f.image ? (
+                  <ImageThumb
+                    key={attachmentKey(f)}
+                    id={f.image}
+                    name={f.name}
+                    small
+                    onRemove={() => setFiles((l) => l.filter((x) => attachmentKey(x) !== attachmentKey(f)))}
+                  />
+                ) : (
+                  <FileChip
+                    key={attachmentKey(f)}
+                    name={f.name}
+                    title={`${f.path}${f.truncated ? " — trop long : seul le début est joint" : ""}`}
+                    note={f.truncated ? "début seulement" : undefined}
+                    onRemove={() => setFiles((l) => l.filter((x) => attachmentKey(x) !== attachmentKey(f)))}
+                  />
+                ),
+              )}
               {reading > 0 && (
                 <span className="flex items-center gap-1.5 rounded-lg border border-[var(--border)] px-2.5 py-1 text-sm text-[var(--muted)]">
                   <Loader2 size={13} className="animate-spin" /> Lecture…
                 </span>
               )}
             </div>
+          )}
+          {blindImages && (
+            <p className="mx-auto mb-2 flex max-w-3xl items-center gap-1.5 text-xs text-[var(--muted)]">
+              <EyeOff size={13} className="shrink-0" />
+              Le modèle local ne voit pas les images : seul le texte qu'elles contiennent sera lu.
+              <button className="underline hover:text-[var(--text)]" onClick={onOpenModels}>
+                Ajouter la vision
+              </button>
+            </p>
           )}
           <div className="mx-auto flex max-w-3xl items-end gap-2 rounded-xl border border-[var(--border)] bg-[var(--panel)] p-2 focus-within:border-[var(--accent)]">
             {inTauri && (
@@ -445,6 +480,13 @@ export function Chat({ onOpenModels }: { onOpenModels: () => void }) {
               value={input}
               disabled={!!noModel}
               onChange={(e) => setInput(e.target.value)}
+              onPaste={(e) => {
+                const images = Array.from(e.clipboardData.files).filter((f) => f.type.startsWith("image/"));
+                if (images.length) {
+                  e.preventDefault();
+                  attach({ files: images });
+                }
+              }}
               onKeyDown={(e) => {
                 if (e.key === "Enter" && !e.shiftKey) {
                   e.preventDefault();
@@ -508,12 +550,14 @@ export function Chat({ onOpenModels }: { onOpenModels: () => void }) {
 function Bubble({
   role,
   content,
+  images,
   reasoning,
   streaming,
   meta,
 }: {
   role: Message["role"];
   content: string;
+  images?: string[];
   reasoning?: string;
   streaming?: boolean;
   meta?: Message;
@@ -522,6 +566,13 @@ function Bubble({
     const { text, files } = splitAttachments(content);
     return (
       <div className="flex flex-col items-end gap-1.5">
+        {images && images.length > 0 && (
+          <div className="flex max-w-[80%] flex-wrap justify-end gap-1.5">
+            {images.map((id, i) => (
+              <ImageThumb key={`${id}-${i}`} id={id} />
+            ))}
+          </div>
+        )}
         {files.length > 0 && (
           <div className="flex max-w-[80%] flex-wrap justify-end gap-1.5">
             {files.map((f, i) => (
@@ -563,6 +614,65 @@ function Bubble({
         </p>
       )}
     </div>
+  );
+}
+
+/** Clé d'une pièce jointe : l'image rangée, sinon le chemin du fichier. */
+function attachmentKey(a: Attachment): string {
+  return a.image ?? a.path;
+}
+
+// Les images ne changent jamais (nom tiré du contenu) : chargées une seule fois.
+const imageUrls = new Map<string, Promise<string>>();
+
+function useImageUrl(id: string): string | null {
+  const [url, setUrl] = useState<string | null>(null);
+  useEffect(() => {
+    let alive = true;
+    let p = imageUrls.get(id);
+    if (!p) {
+      p = api.imageDataUrl(id);
+      imageUrls.set(id, p);
+      p.catch(() => imageUrls.delete(id));
+    }
+    p.then((u) => alive && setUrl(u)).catch(() => {});
+    return () => {
+      alive = false;
+    };
+  }, [id]);
+  return url;
+}
+
+function ImageThumb({ id, name, small, onRemove }: { id: string; name?: string; small?: boolean; onRemove?: () => void }) {
+  const url = useImageUrl(id);
+  const [zoom, setZoom] = useState(false);
+  const size = small ? "size-14" : "max-h-48 max-w-64";
+  return (
+    <span className="relative inline-flex" title={name}>
+      {url ? (
+        <button onClick={() => setZoom(true)} aria-label={`Agrandir ${name ?? "l'image"}`}>
+          <img src={url} alt={name ?? "image jointe"} className={`${size} rounded-lg border border-[var(--border)] object-cover`} />
+        </button>
+      ) : (
+        <span className={`${small ? "size-14" : "size-32"} flex items-center justify-center rounded-lg border border-[var(--border)] text-[var(--muted)]`}>
+          <Loader2 size={14} className="animate-spin" />
+        </span>
+      )}
+      {onRemove && (
+        <button
+          className="absolute -top-1.5 -right-1.5 rounded-full border border-[var(--border)] bg-[var(--panel)] p-0.5 text-[var(--muted)] hover:text-[var(--danger)]"
+          onClick={onRemove}
+          aria-label={`Retirer ${name ?? "l'image"}`}
+        >
+          <X size={12} />
+        </button>
+      )}
+      {zoom && url && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/75 p-6" onClick={() => setZoom(false)}>
+          <img src={url} alt={name ?? "image jointe"} className="max-h-full max-w-full rounded-lg" />
+        </div>
+      )}
+    </span>
   );
 }
 

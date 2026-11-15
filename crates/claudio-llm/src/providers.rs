@@ -67,7 +67,49 @@ pub fn endpoint(p: &ProviderConfig, model: &str, api_key: Option<String>) -> Res
         model: model.to_owned(),
         api_key,
         lease: None,
+        vision: sees_images(p.kind, model),
     })
+}
+
+/// Le modèle distant accepte-t-il des images ? Estimation d'après son nom ; en
+/// cas de doute, non (les images sont alors transmises par leur texte reconnu).
+pub fn sees_images(kind: ProviderKind, model: &str) -> bool {
+    let m = model.to_ascii_lowercase();
+    let m = m.rsplit('/').next().unwrap_or(&m);
+    match kind {
+        ProviderKind::Anthropic | ProviderKind::Gemini => true,
+        ProviderKind::OpenAi => {
+            !(m.starts_with("gpt-3.5") || m.starts_with("o1-mini") || m.starts_with("o3-mini"))
+        }
+        ProviderKind::Mistral => [
+            "pixtral",
+            "mistral-medium",
+            "mistral-small",
+            "mistral-large-latest",
+        ]
+        .iter()
+        .any(|p| m.starts_with(p)),
+        // OpenRouter : modèles connus pour la vision, d'après leur nom.
+        ProviderKind::OpenRouter => [
+            "claude",
+            "gpt-4o",
+            "gpt-4.1",
+            "gpt-5",
+            "gemini",
+            "pixtral",
+            "gemma-3",
+            "gemma-4",
+            "qwen2.5-vl",
+            "qwen3-vl",
+            "qwen3.5",
+            "qwen3.6",
+            "llama-4",
+            "grok-4",
+        ]
+        .iter()
+        .any(|p| m.starts_with(p)),
+        ProviderKind::Custom => false,
+    }
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -170,6 +212,24 @@ mod tests {
     }
 
     #[test]
+    fn vision_by_model_name() {
+        assert!(sees_images(ProviderKind::Gemini, "gemini-3-flash"));
+        assert!(sees_images(ProviderKind::OpenAi, "gpt-5.2"));
+        assert!(!sees_images(ProviderKind::OpenAi, "o3-mini"));
+        assert!(sees_images(ProviderKind::Mistral, "pixtral-large-latest"));
+        assert!(!sees_images(ProviderKind::Mistral, "codestral-latest"));
+        assert!(sees_images(
+            ProviderKind::OpenRouter,
+            "anthropic/claude-sonnet-5-5"
+        ));
+        assert!(!sees_images(
+            ProviderKind::OpenRouter,
+            "deepseek/deepseek-v4"
+        ));
+        assert!(!sees_images(ProviderKind::Custom, "llava"));
+    }
+
+    #[test]
     fn endpoints() {
         let a = endpoint(
             &provider(ProviderKind::Anthropic),
@@ -178,6 +238,7 @@ mod tests {
         )
         .unwrap();
         assert_eq!(a.api, Api::Anthropic);
+        assert!(a.vision);
         assert!(endpoint(&provider(ProviderKind::OpenAi), "gpt", None).is_err());
         assert!(
             endpoint(&provider(ProviderKind::Custom), "m", None).is_err(),

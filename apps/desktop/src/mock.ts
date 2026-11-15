@@ -177,6 +177,8 @@ const sessions: Session[] = [];
 const messages: Message[] = [];
 let nextId = 1;
 const cancelled = new Set<string>();
+/** Images « rangées » de l'aperçu : nom → adresse data:. */
+const mockImages = new Map<string, string>();
 
 function status(): Status {
   return {
@@ -380,6 +382,23 @@ export async function mockInvoke<T>(cmd: string, args: Record<string, any> = {})
     case "rename_session":
       sessions.find((s) => s.id === args.id)!.title = args.title;
       return r(undefined);
+    case "attach_image": {
+      const id = `${(mockImages.size + 1).toString(16).padStart(8, "0")}.jpg`;
+      mockImages.set(id, args.url);
+      return r({ name: args.name, path: `presse-papiers:${args.name}`, kind: "image", text: "", truncated: false, image: id });
+    }
+    case "image_data_url": {
+      const url = mockImages.get(args.id);
+      if (!url) throw new Error(`image ${args.id} introuvable`);
+      return r(url);
+    }
+    case "add_vision": {
+      const m = installed.find((x) => x.key === args.key)!;
+      await fakeDownload(850e6, `${args.key}#vision`, args.onProgress);
+      m.mmproj = "gemma-4-12b/mmproj-F16.gguf";
+      m.mmproj_size = 850e6;
+      return r({ ...m });
+    }
     case "delete_session":
       sessions.splice(sessions.findIndex((s) => s.id === args.id), 1);
       return r(undefined);
@@ -389,7 +408,7 @@ export async function mockInvoke<T>(cmd: string, args: Record<string, any> = {})
       const on = args.onEvent as (e: StreamEvent) => void;
       const s = sessions.find((x) => x.id === args.sessionId)!;
       const now = () => new Date().toISOString();
-      messages.push({ id: nextId++, session_id: s.id, role: "user", content: args.text, model: null, tokens: null, duration_ms: null, reasoning: null, route: null, cost_usd: null, created_at: now() });
+      messages.push({ id: nextId++, session_id: s.id, role: "user", content: args.text, model: null, tokens: null, duration_ms: null, reasoning: null, route: null, cost_usd: null, images: args.images ?? [], created_at: now() });
       const mode = s.route ?? config.routing.mode;
       const cloud = mode === "cloud" && config.routing.cloud;
       const route = cloud ? "mode cloud" : "modèle local";

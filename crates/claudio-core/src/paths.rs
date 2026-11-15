@@ -84,6 +84,11 @@ impl AppPaths {
         self.config_dir.join("skills")
     }
 
+    /// Images jointes aux conversations.
+    pub fn images_dir(&self) -> PathBuf {
+        self.data_dir.join("images")
+    }
+
     /// Espace de travail des outils : toujours accessible, inscriptible par le bac à sable.
     pub fn workspace_dir(&self) -> PathBuf {
         self.data_dir.join("workspace")

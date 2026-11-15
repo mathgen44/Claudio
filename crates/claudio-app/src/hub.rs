@@ -125,6 +125,7 @@ impl Claudio {
                 quant,
                 params_b: Some(fit.params_b),
                 context_max: info.context_length,
+                mmproj: info.mmproj.clone(),
             },
             &variant.files,
             token.as_deref(),

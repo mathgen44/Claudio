@@ -79,6 +79,7 @@ impl Embedder for LocalEmbedder<'_> {
                     self.model.pooling.clone().unwrap_or_else(|| "mean".into()),
                 ),
                 memory: 0,
+                mmproj: None,
             };
             let endpoint = self
                 .app

@@ -27,6 +27,11 @@ pub struct InstalledModel {
     pub params_b: Option<f64>,
     #[serde(default)]
     pub context_max: Option<u32>,
+    /// Projecteur de vision (chemin relatif au dossier des modèles) : le modèle voit les images.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mmproj: Option<PathBuf>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mmproj_size: Option<u64>,
     pub installed_at: DateTime<Utc>,
 }
 
@@ -86,6 +91,14 @@ impl Registry {
         self.root.join(&m.file)
     }
 
+    /// Projecteur de vision du modèle, s'il est présent sur le disque.
+    pub fn mmproj_of(&self, m: &InstalledModel) -> Option<PathBuf> {
+        m.mmproj
+            .as_ref()
+            .map(|p| self.root.join(p))
+            .filter(|p| p.is_file())
+    }
+
     /// Emplacement de destination d'un fichier de modèle.
     pub fn target_path(&self, model_id: &str, file: &str) -> PathBuf {
         self.root.join(model_id).join(file)
@@ -98,11 +111,21 @@ impl Registry {
         self.save(&m)
     }
 
-    /// Retire un modèle du registre et supprime son fichier.
+    /// Retire un modèle du registre et supprime son fichier (et son projecteur
+    /// de vision, s'il ne sert plus à aucune autre quantification).
     pub fn remove(&self, key: &str) -> Result<()> {
         let mut m = self.load()?;
         if let Some(found) = m.models.iter().find(|x| x.key == key) {
-            for rel in std::iter::once(&found.file).chain(&found.parts) {
+            let shared = |p: &PathBuf| {
+                m.models
+                    .iter()
+                    .any(|o| o.key != key && o.mmproj.as_ref() == Some(p))
+            };
+            let mmproj = found.mmproj.as_ref().filter(|p| !shared(p));
+            for rel in std::iter::once(&found.file)
+                .chain(&found.parts)
+                .chain(mmproj)
+            {
                 let path = self.root.join(rel);
                 if path.exists() {
                     std::fs::remove_file(&path)
@@ -138,6 +161,8 @@ mod tests {
             sha256: None,
             params_b: None,
             context_max: None,
+            mmproj: None,
+            mmproj_size: None,
             installed_at: Utc::now(),
         })
         .unwrap();
@@ -146,5 +171,41 @@ mod tests {
         reg.remove("m:Q4").unwrap();
         assert!(reg.list().unwrap().is_empty());
         assert!(!target.exists());
+    }
+
+    #[test]
+    fn shared_projector_is_kept() {
+        let dir = tempfile::tempdir().unwrap();
+        let reg = Registry::new(dir.path());
+        let proj = PathBuf::from("m").join("mmproj-F16.gguf");
+        std::fs::create_dir_all(dir.path().join("m")).unwrap();
+        std::fs::write(dir.path().join(&proj), b"p").unwrap();
+        for q in ["Q4", "Q8"] {
+            let file = PathBuf::from("m").join(format!("m-{q}.gguf"));
+            std::fs::write(dir.path().join(&file), b"gguf").unwrap();
+            reg.add(InstalledModel {
+                key: format!("m:{q}"),
+                model_id: "m".into(),
+                name: "M".into(),
+                quant: q.into(),
+                repo: "r/m".into(),
+                file,
+                parts: vec![],
+                size: 4,
+                sha256: None,
+                params_b: None,
+                context_max: None,
+                mmproj: Some(proj.clone()),
+                mmproj_size: Some(1),
+                installed_at: Utc::now(),
+            })
+            .unwrap();
+        }
+        let m = reg.get("m:Q4").unwrap().unwrap();
+        assert!(reg.mmproj_of(&m).is_some());
+        reg.remove("m:Q4").unwrap();
+        assert!(dir.path().join(&proj).exists(), "encore utilisé par Q8");
+        reg.remove("m:Q8").unwrap();
+        assert!(!dir.path().join(&proj).exists());
     }
 }

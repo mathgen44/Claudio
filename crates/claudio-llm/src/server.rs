@@ -31,6 +31,8 @@ pub struct ServerConfig {
     pub embedding_pooling: Option<String>,
     /// Mémoire estimée (poids, cache et calcul), pour la place laissée aux autres modèles.
     pub memory: u64,
+    /// Projecteur de vision (`mmproj-*.gguf`) : le modèle accepte alors des images.
+    pub mmproj: Option<PathBuf>,
 }
 
 impl ServerConfig {
@@ -66,6 +68,12 @@ impl ServerConfig {
         } else {
             // Modèle de conversation intégré au fichier GGUF (outils, raisonnement).
             a.push("--jinja".into());
+            if let Some(mmproj) = &self.mmproj {
+                a.extend(["--mmproj".into(), mmproj.display().to_string()]);
+                if !self.use_gpu {
+                    a.push("--no-mmproj-offload".into());
+                }
+            }
         }
         if self.use_gpu {
             // Attention optimisée et cache KV quantifié : moitié moins de mémoire.
@@ -206,6 +214,7 @@ impl LlamaServer {
             model: self.config.alias.clone(),
             api_key: None,
             lease: None,
+            vision: self.config.mmproj.is_some(),
         }
     }
 
