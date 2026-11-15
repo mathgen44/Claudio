@@ -10,7 +10,7 @@
       "active_params_b": 0.8,
       "quality": 20,
       "kv_kb_per_token": 112,
-      "context_max": 32768,
+      "context_max": 262144,
       "roles": [
         "chat",
         "router"
@@ -38,7 +38,7 @@
       "active_params_b": 2,
       "quality": 32,
       "kv_kb_per_token": 112,
-      "context_max": 32768,
+      "context_max": 262144,
       "roles": [
         "chat",
         "router"
@@ -71,7 +71,7 @@
       "active_params_b": 4,
       "quality": 45,
       "kv_kb_per_token": 144,
-      "context_max": 32768,
+      "context_max": 262144,
       "roles": [
         "chat"
       ],
@@ -108,7 +108,7 @@
       "active_params_b": 9,
       "quality": 58,
       "kv_kb_per_token": 144,
-      "context_max": 32768,
+      "context_max": 262144,
       "roles": [
         "chat"
       ],
@@ -150,7 +150,7 @@
       "active_params_b": 12,
       "quality": 63,
       "kv_kb_per_token": 384,
-      "context_max": 32768,
+      "context_max": 262144,
       "roles": [
         "chat"
       ],
@@ -192,7 +192,7 @@
       "active_params_b": 4,
       "quality": 70,
       "kv_kb_per_token": 192,
-      "context_max": 32768,
+      "context_max": 262144,
       "roles": [
         "chat"
       ],
@@ -229,7 +229,7 @@
       "active_params_b": 3,
       "quality": 74,
       "kv_kb_per_token": 96,
-      "context_max": 32768,
+      "context_max": 262144,
       "roles": [
         "chat"
       ],
@@ -266,7 +266,7 @@
       "active_params_b": 27,
       "quality": 78,
       "kv_kb_per_token": 256,
-      "context_max": 32768,
+      "context_max": 262144,
       "roles": [
         "chat"
       ],

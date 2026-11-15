@@ -450,6 +450,16 @@ impl Claudio {
         }
     }
 
+    /// Contexte maximal d'un modèle installé. Le catalogue prime sur la valeur
+    /// enregistrée à l'installation, pour que ses relèvements s'appliquent aux
+    /// modèles déjà téléchargés.
+    pub(crate) fn context_max_of(&self, m: &InstalledModel) -> Option<u32> {
+        self.catalog
+            .get(&m.model_id)
+            .map(|c| c.context_max)
+            .or(m.context_max)
+    }
+
     fn server_config(
         &self,
         cfg: &Config,
@@ -457,9 +467,7 @@ impl Claudio {
         m: &InstalledModel,
     ) -> Result<ServerConfig> {
         let profile = self.hardware().profile();
-        let model_max = m
-            .context_max
-            .or_else(|| self.catalog.get(&m.model_id).map(|c| c.context_max));
+        let model_max = self.context_max_of(m);
         let ctx = cfg
             .context_size
             .unwrap_or(DEFAULT_CONTEXT)

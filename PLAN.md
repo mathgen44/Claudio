@@ -339,6 +339,7 @@ Mesuré sur la machine de développement (RTX 5070 Ti) : ~440 jetons/s avec Qwen
 - Édition des agents dans l'interface (catalogue d'agents) : création, duplication, modification des agents fournis (un fichier du dossier utilisateur les remplace, « Rétablir l'original » le supprime), suppression ; outils cochés dans la liste réelle (MCP compris) ou motifs saisis. Les fichiers YAML restent la source et peuvent toujours être édités à la main.
 - Clés des serveurs MCP : variables d'environnement (programme local) ou en-têtes HTTP (`Authorization`…) saisies dans « Outils et accès » ; seules les valeurs vont au Gestionnaire d'identifiants (`Claudio/mcp-<serveur>-<clé>`), la configuration ne garde que les noms. Clés modifiables (valeur vide = inchangée), supprimées avec le serveur ; en-têtes marqués sensibles.
 - La lecture des PDF et documents Office, notée ici comme reportée, était déjà livrée avec la phase 5.
+- Contexte des modèles locaux relevé : le catalogue indique désormais le maximum natif (262 144 jetons pour Qwen 3.5 et suivants et pour Gemma 4, au lieu de 32 768), et les Paramètres proposent 65 536, 131 072 et 262 144. Le maximum du catalogue prime sur celui enregistré à l'installation, pour que les modèles déjà téléchargés en profitent. Le contexte par défaut reste à 8 192 ; au-delà de la mémoire vidéo, llama.cpp déborde en mémoire vive (plus lent).
 
 ### Reporté
 

@@ -282,7 +282,7 @@ impl Claudio {
                 .get(id)
                 .ok()
                 .flatten()
-                .and_then(|m| m.context_max),
+                .and_then(|m| self.context_max_of(&m)),
             _ => None,
         };
         cfg.context_size

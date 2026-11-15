@@ -9,7 +9,7 @@ import { MachineCard } from "../components/MachineCard";
 import { RUNTIME_KEY, useStore } from "../store";
 import { Button, Card, ErrorNote, PageHeader } from "../ui";
 
-const CONTEXTS = [4096, 8192, 16384, 32768];
+const CONTEXTS = [4096, 8192, 16384, 32768, 65536, 131072, 262144];
 
 export function Settings({ onRestartOnboarding }: { onRestartOnboarding: () => void }) {
   const { status, refresh, downloads, installRuntime } = useStore();
@@ -84,7 +84,7 @@ export function Settings({ onRestartOnboarding }: { onRestartOnboarding: () => v
 
       <Card className="space-y-4">
         <h2 className="font-medium">Conversation</h2>
-        <Field label="Taille du contexte" hint="Mémoire de la conversation, en jetons. Plus grand = plus de mémoire vidéo.">
+        <Field label="Taille du contexte" hint="Mémoire de la conversation, en jetons, plafonnée au maximum du modèle. Plus grand = plus de mémoire vidéo ; au-delà de la carte graphique, le cache déborde en mémoire vive et les réponses ralentissent.">
           <select
             className={select}
             value={cfg.context_size ?? ""}
